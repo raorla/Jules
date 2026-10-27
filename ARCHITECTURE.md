@@ -116,6 +116,10 @@ En mode local, l'app desktop lance cette même pile sur la machine de l'utilisat
   - relever un niveau d'autonomie ;
   - accepter un risque ;
   - lever l'arrêt d'urgence.
+
+  La webview du desktop n'a pas de passkey (WebKitGTK n'en gère aucune, vérifié avec la 2.52), et son origine (`tauri://localhost`, `http://tauri.localhost`) n'est pas celle du serveur, que la passkey exige. Le desktop confirme donc autrement :
+  - **mode connecté** : l'app crée une demande avec sa session (`POST /v1/step-up/browser`) et ouvre la page `/stepup` du serveur dans le navigateur du système. La passkey s'y fait sur l'origine du serveur, sans session : l'identifiant de la demande, à usage unique et valable 5 minutes, désigne la session du desktop, et seule une passkey de sa titulaire la renforce. Les passkeys s'enregistrent dans l'interface web ;
+  - **mode local** (écart assumé à la passkey) : pas de serveur ni d'équipe, une seule personne sur sa machine. Le shell affiche une fenêtre native, que la page ne peut ni imiter ni valider, puis signe le défi à usage unique de l'api avec une clé Ed25519 du trousseau (`local:step-up-key`) que la page ne voit jamais ; l'api locale n'en connaît que la clé publique. C'est la session du système, qui ouvre le trousseau, qui tient lieu de facteur.
 - **Versions** : l'API est versionnée (`/v1`). Le serveur annonce les versions du desktop qu'il accepte, et un desktop trop ancien demande une mise à jour avant de se connecter.
 - En déploiement serveur, il est recommandé de la placer derrière un accès protégé (Cloudflare Access, VPN).
 
@@ -203,7 +207,7 @@ Elle fonctionne selon deux modes :
 **Mode local.** L'app lance la pile Jules sur la machine (worker, PostgreSQL, egress proxy) avec Docker ou Podman, et travaille sur des dossiers locaux (forge locale, §11).
 - La pile est `deploy/local/compose.yaml`, avec les images du serveur. L'api n'écoute que sur l'adresse de bouclage (`127.0.0.1:43117`) et n'a aucun identifiant GitHub ; PostgreSQL n'a ni port publié ni mot de passe (réseau interne).
 - Les secrets sont rangés dans le trousseau du système (Keychain sur macOS, Gestionnaire d'identifiants sur Windows, Secret Service sur Linux). L'environnement des conteneurs n'en contient aucun, car Docker le garde sur le disque. Au démarrage, l'app remet la clé maître et la clé API du fournisseur au worker une seule fois, par un point d'accès éphémère : un socket Unix dans un dossier privé, monté dans le seul conteneur du worker (Linux), ou une adresse de bouclage jointe par `host.docker.internal` (Docker Desktop). Le jeton de cette remise ne sert qu'une fois ; un worker arrêté est relancé par l'app, avec une nouvelle remise. La clé API est demandée par l'app au premier démarrage et se remplace dans ses réglages (le worker est alors relancé) : en mode local, elle ne passe ni par la base ni par l'api, et c'est la session du système qui protège le trousseau, à la place de la passkey demandée sur un serveur.
-- L'app se connecte à l'api locale avec un secret tiré au premier lancement et rangé dans le trousseau ; l'api n'en connaît que le hash. La personne est admin de son instance locale.
+- L'app se connecte à l'api locale avec un secret tiré au premier lancement et rangé dans le trousseau ; l'api n'en connaît que le hash. La personne est admin de son instance locale. Ses actions sensibles se confirment dans une fenêtre native du shell, qui signe le défi de l'api avec une clé du trousseau (§4.2).
 - L'isolation dépend du système. Sous Linux, gVisor est utilisé s'il est installé (`runsc` parmi les runtimes de Docker). Sous macOS et Windows, les conteneurs tournent dans la VM de Docker Desktop, sans gVisor. Sans l'un ni l'autre, c'est un conteneur ordinaire. L'app affiche le niveau d'isolation en vigueur en permanence.
 - Changer de mode ne demande pas de réinstaller : le mode est un réglage de l'app, et les deux connexions restent dans le trousseau.
 

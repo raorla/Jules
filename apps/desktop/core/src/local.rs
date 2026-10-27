@@ -13,6 +13,7 @@ use crate::engine::{parse_docker_info, parse_podman_info, Engine, EngineKind, DO
 use crate::handoff::{random_master_key, serve_once, HandoffError, Secrets};
 use crate::pkce::random_token;
 use crate::stack::{compose_command, compose_env, compose_failure, daemon_path, login_hash, StackConfig, PROJECT};
+use crate::stepup;
 
 pub const LOCAL_API_PORT: u16 = 43117;
 pub const MASTER_KEY_ENTRY: &str = "local:master-key";
@@ -20,6 +21,8 @@ pub const LOGIN_ENTRY: &str = "local:login-secret";
 /// Clé API du fournisseur de modèle, saisie dans l'app : en mode local, elle ne passe ni par la base
 /// ni par une passkey (la webview Linux n'en gère pas), seulement par le trousseau et la remise.
 pub const API_KEY_ENTRY: &str = "local:anthropic-api-key";
+/// Graine Ed25519 des confirmations du mode local (`stepup`) : jamais remise à la page ni au worker.
+pub const STEP_UP_KEY_ENTRY: &str = "local:step-up-key";
 const HANDOFF_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Le trousseau du système (Keychain, Gestionnaire d'identifiants, Secret Service).
@@ -75,7 +78,8 @@ pub fn detect() -> Option<Engine> {
         .or_else(|| info("podman", PODMAN_INFO_FORMAT).and_then(|out| parse_podman_info(&out).ok()))
 }
 
-/// L'api locale répond sur l'adresse de bouclage, et c'est bien une api en mode local.
+/// L'api locale répond sur l'adresse de bouclage, en mode local, et vérifie les confirmations du
+/// trousseau : une api lancée par une version plus ancienne de l'app est relancée.
 pub fn healthy(port: u16) -> bool {
     let Ok(mut stream) = TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_secs(1)) else {
         return false;
@@ -87,6 +91,7 @@ pub fn healthy(port: u16) -> bool {
         && stream.read_to_string(&mut response).is_ok()
         && response.starts_with("HTTP/1.1 200")
         && response.contains("\"mode\":\"local\"")
+        && response.contains("\"stepUp\":\"keychain\"")
 }
 
 /// Le worker de la pile tourne. Il s'arrête sans redémarrer (la remise n'a lieu qu'une fois) : une api
@@ -177,6 +182,7 @@ pub fn start(paths: &LocalPaths, vault: &dyn Vault, version: &str, recreate_work
     let api_key = vault.get(API_KEY_ENTRY)?.ok_or("clé API du fournisseur absente du trousseau")?;
     let master_key = vault.get_or_create(MASTER_KEY_ENTRY, random_master_key)?;
     let login_secret = vault.get_or_create(LOGIN_ENTRY, || random_token(32))?;
+    let step_up_public_key = stepup::public_key(&vault.get_or_create(STEP_UP_KEY_ENTRY, stepup::random_seed)?)?;
     let runs_dir = paths.data.join("runs");
     private_dir(&runs_dir)?;
     let handoff_dir = paths.runtime.as_ref().map_or_else(|| paths.data.join("handoff"), |d| d.join("jules"));
@@ -207,6 +213,7 @@ pub fn start(paths: &LocalPaths, vault: &dyn Vault, version: &str, recreate_work
         handoff_token: &token,
         handoff_dir: Some(&handoff),
         login_hash: &hash,
+        step_up_public_key: &step_up_public_key,
         user: user.as_deref(),
         docker_gid: docker_gid.as_deref(),
         version,
@@ -296,7 +303,9 @@ mod tests {
             });
             port
         };
-        assert!(healthy(serve(r#"{"ok":true,"api":"v1","mode":"local"}"#)));
+        assert!(healthy(serve(r#"{"ok":true,"api":"v1","mode":"local","stepUp":"keychain"}"#)));
+        // Une api d'une version plus ancienne de l'app, sans confirmation par le trousseau : relancée.
+        assert!(!healthy(serve(r#"{"ok":true,"api":"v1","mode":"local"}"#)));
         assert!(!healthy(serve(r#"{"ok":true,"api":"v1","mode":"server"}"#)));
         let closed = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         assert!(!healthy(closed));

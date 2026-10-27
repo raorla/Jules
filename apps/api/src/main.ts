@@ -19,6 +19,7 @@ const env = local
         ...base,
         JULES_PUBLIC_URL: z.url().default("http://127.0.0.1:3001"),
         JULES_LOCAL_LOGIN_HASH: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+        JULES_LOCAL_STEPUP_PUBLIC_KEY: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
         JULES_LOCAL_ROOTS: z.string().default(""),
         HOST: z.enum(["127.0.0.1", "::1", "0.0.0.0"]).default("127.0.0.1"),
         PORT: z.coerce.number().int().default(3001),
@@ -54,6 +55,7 @@ const app = await buildApi({
     : {
         local: {
           loginHash: env.JULES_LOCAL_LOGIN_HASH,
+          stepUpPublicKey: env.JULES_LOCAL_STEPUP_PUBLIC_KEY,
           roots: env.JULES_LOCAL_ROOTS.split(",")
             .map((r) => r.trim())
             .filter(Boolean),

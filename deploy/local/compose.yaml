@@ -50,6 +50,8 @@ services:
       JULES_MODE: local
       JULES_PUBLIC_URL: http://127.0.0.1:${JULES_LOCAL_API_PORT:-43117}
       JULES_LOCAL_LOGIN_HASH: ${JULES_LOCAL_LOGIN_HASH:?lancée par l'app desktop seulement}
+      # Clé publique des confirmations du desktop (la clé privée reste dans le trousseau).
+      JULES_LOCAL_STEPUP_PUBLIC_KEY: ${JULES_LOCAL_STEPUP_PUBLIC_KEY:?lancée par l'app desktop seulement}
       JULES_LOCAL_ROOTS: ${JULES_LOCAL_ROOT:?lancée par l'app desktop seulement}
       HOST: 0.0.0.0
       PORT: "3001"

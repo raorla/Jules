@@ -28,6 +28,7 @@ import {
 } from "./api.js";
 import { ArtifactCards } from "./artifacts.js";
 import { PendingPlans } from "./devops.js";
+import { useDesktopSession } from "./desktop.js";
 import { DesktopModeCard, LocalApiKeyCard, LocalMergeCard, LocalReposCard } from "./local.js";
 import { OrgSettingsCard } from "./security.js";
 import {
@@ -553,6 +554,7 @@ export function SettingsPage({ me }: { me: Me }) {
   const [notice, setNotice] = useState<string | undefined>();
   const [theme, setThemeState] = useState<Theme>(currentTheme);
   const repos = useQuery({ queryKey: ["repos"], queryFn: () => api<Repo[]>("/v1/repos") });
+  const desktop = useDesktopSession();
   const passkeys = useQuery({
     queryKey: ["passkeys"],
     queryFn: () => api<{ id: string; label: string }[]>("/v1/passkeys"),
@@ -661,21 +663,31 @@ export function SettingsPage({ me }: { me: Me }) {
       <div className="stack">
         <Card title={t("settings.passkeys")} icon={<Fingerprint aria-hidden="true" />}>
           <div className="card-body stack">
-            {(passkeys.data ?? []).map((p) => (
-              <Chip key={p.id} tone="ok">
-                {p.label}
-              </Chip>
-            ))}
-            <button
-              className="pill"
-              onClick={() =>
-                void registerPasskey(navigator.platform || "Passkey").then(() =>
-                  client.invalidateQueries({ queryKey: ["passkeys"] }),
-                )
-              }
-            >
-              {t("settings.passkey_add")}
-            </button>
+            {desktop?.mode !== "local" &&
+              (passkeys.data ?? []).map((p) => (
+                <Chip key={p.id} tone="ok">
+                  {p.label}
+                </Chip>
+              ))}
+            {/* La webview du desktop n'a pas de passkey : enregistrement dans l'interface web. */}
+            {desktop ? (
+              <p className="ink-2">
+                {desktop.mode === "local"
+                  ? t("settings.passkeys_local")
+                  : t("settings.passkeys_desktop")}
+              </p>
+            ) : (
+              <button
+                className="pill"
+                onClick={() =>
+                  void registerPasskey(navigator.platform || "Passkey").then(() =>
+                    client.invalidateQueries({ queryKey: ["passkeys"] }),
+                  )
+                }
+              >
+                {t("settings.passkey_add")}
+              </button>
+            )}
           </div>
         </Card>
         {me.role === "admin" && <OrgSettingsCard />}

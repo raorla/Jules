@@ -109,14 +109,19 @@
     "passkeys": "Passkeys",
     "passkey_add": "Ajouter une passkey",
     "passkey_added": "Passkey enregistrée.",
-    "write_only": "En écriture seule : une fois enregistré, un secret n'est plus jamais affiché."
+    "write_only": "En écriture seule : une fois enregistré, un secret n'est plus jamais affiché.",
+    "passkeys_desktop": "Enregistre tes passkeys dans l'interface web de ton serveur : l'app s'en sert par ton navigateur.",
+    "passkeys_local": "En mode local, les actions sensibles se confirment dans une fenêtre du système, sans passkey."
   },
   "stepup": {
     "title": "Confirmer avec ta passkey",
     "text": "Cette action est sensible : Jules demande ta passkey, même avec une session ouverte.",
     "confirm": "Utiliser ma passkey",
     "cancel": "Annuler",
-    "none": "Ajoute d'abord une passkey dans les réglages."
+    "none": "Ajoute d'abord une passkey dans les réglages.",
+    "browser_text": "Cette action est sensible. La webview de l'app n'a pas de passkey : la confirmation s'ouvre dans ton navigateur, sur ton serveur Jules. Reviens ici ensuite, l'action continue d'elle-même.",
+    "browser": "Ouvrir le navigateur",
+    "browser_waiting": "Confirme dans ton navigateur…"
   },
   "stop": {
     "title": "Arrêter toutes les exécutions ?",
@@ -434,5 +439,13 @@
     "api_key_replace": "Remplacer la clé",
     "api_key_saving": "Relance du worker…",
     "api_key_replaced": "Clé remplacée, le worker l'a reçue."
+  },
+  "stepup_page": {
+    "subtitle": "confirme une action.",
+    "loading": "Lecture de la demande de l'app…",
+    "text": "L'app Jules demande ta passkey pour cette action :",
+    "done": "Confirmé. Retourne dans l'app Jules : l'action continue.",
+    "no_passkey": "Aucune passkey sur ton compte. Connecte-toi à l'interface web, ajoute une passkey dans Réglages, puis recharge cette page : la demande reste valable 5 minutes.",
+    "open_web": "Ouvrir l'interface web"
   }
 }

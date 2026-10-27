@@ -317,6 +317,70 @@ export async function registerPasskey(label: string): Promise<void> {
   await api("/v1/passkeys/register/verify", { method: "POST", body: { response, label } });
 }
 
+/** Adresse de l'api configurée : sur le desktop, celle du serveur choisi ou de l'api locale. */
+export const apiBase = () => base;
+
+/**
+ * Desktop connecté : la webview n'a pas de passkey, et son origine n'est pas celle du serveur. La
+ * demande part de la session du desktop, la passkey se fait dans le navigateur du système, sur le
+ * serveur, et l'app attend que sa session soit renforcée.
+ */
+export async function stepUpInBrowser(
+  purpose: string,
+  open: (server: string, request: string) => Promise<void>,
+  signal: AbortSignal,
+): Promise<void> {
+  const before = (await api<Me>("/v1/me")).stepUpUntil;
+  const { request } = await api<{ request: string }>("/v1/step-up/browser", {
+    method: "POST",
+    body: { purpose },
+  });
+  await open(base, request);
+  const deadline = Date.now() + 5 * 60_000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    if (signal.aborted) {
+      throw new Error("confirmation annulée");
+    }
+    // Comparé à la valeur d'avant, pas à l'horloge de la machine : le serveur seul fait foi.
+    const after = (await api<Me>("/v1/me")).stepUpUntil;
+    if (after && after !== before) {
+      return;
+    }
+  }
+  throw new Error("confirmation non terminée dans le navigateur");
+}
+
+/** Mode local : fenêtre native du shell, qui signe le défi de l'api avec la clé du trousseau. */
+export async function stepUpWithKeychain(
+  purpose: string,
+  confirm: (challenge: string, purpose: string) => Promise<string | null>,
+): Promise<boolean> {
+  const { challenge } = await api<{ challenge: string }>("/v1/auth/local/step-up/challenge", {
+    method: "POST",
+    body: { purpose },
+  });
+  const signature = await confirm(challenge, purpose);
+  if (!signature) {
+    return false;
+  }
+  await api("/v1/auth/local/step-up", { method: "POST", body: { signature } });
+  return true;
+}
+
+/** Page du navigateur (desktop connecté) : sans session, la demande désigne la session à renforcer. */
+export async function confirmBrowserRequest(request: string): Promise<void> {
+  const { options } = await api<{
+    options: Parameters<typeof startAuthentication>[0]["optionsJSON"];
+  }>("/v1/step-up/browser/options", { method: "POST", body: { request }, anonymous: true });
+  const response = await startAuthentication({ optionsJSON: options });
+  await api("/v1/step-up/browser/verify", {
+    method: "POST",
+    body: { request, response },
+    anonymous: true,
+  });
+}
+
 /** Authentification renforcée : la passkey est demandée au moment même de l'action sensible. */
 export async function stepUp(purpose: string): Promise<void> {
   const options = await api<Parameters<typeof startAuthentication>[0]["optionsJSON"]>(

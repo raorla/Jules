@@ -41,6 +41,7 @@ export async function tauriBridge(): Promise<DesktopBridge> {
     setToken: (server, token) => invoke("token_set", { server, token }),
     clearToken: (server) => invoke("token_delete", { server }),
     login: (server) => invoke<{ code: string; verifier: string }>("login", { server }),
+    openStepUp: (server, request) => invoke("open_step_up", { server, request }),
     async notify(notification) {
       if (!(await isPermissionGranted()) && (await requestPermission()) !== "granted") {
         return;
@@ -69,6 +70,8 @@ export async function tauriBridge(): Promise<DesktopBridge> {
       stop: () => invoke("local_stop"),
       hasApiKey: () => invoke<boolean>("local_has_api_key"),
       setApiKey: (key) => invoke<LocalStatus>("local_set_api_key", { key }),
+      confirmStepUp: (challenge, purpose) =>
+        invoke<string | null>("local_confirm_step_up", { challenge, purpose }),
       loginSecret: () => invoke<{ secret: string; login: string }>("local_login_secret"),
       async pickFolder() {
         const path = await open({ directory: true, multiple: false });

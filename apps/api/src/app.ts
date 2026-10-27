@@ -94,6 +94,8 @@ export async function buildApi(options: ApiOptions): Promise<FastifyInstance> {
       ok: true,
       api: "v1",
       mode: options.local ? "local" : "server",
+      // Mode local : les actions sensibles se confirment par le trousseau du desktop (local-routes.ts).
+      ...(options.local ? { stepUp: "keychain" } : {}),
       desktop: { minVersion: "0.1.0" },
     };
   });

@@ -705,6 +705,77 @@ describe("connexion du desktop (M9, RFC 8252 + PKCE)", () => {
     expect((await desktopLogin("root", "trop-court")).start.statusCode).toBe(400);
   });
 
+  it("confirme une action sensible du desktop par une passkey faite dans le navigateur du système", async () => {
+    await addMember("ada-desktop", "admin");
+    await addMember("autre-admin", "admin");
+    const { repo } = await seedRepoAndTask();
+    // Les passkeys s'enregistrent dans l'interface web (la webview du desktop n'en a pas).
+    const web = (await login("ada-desktop"))!;
+    const authenticator = new SoftAuthenticator("jules.test", PUBLIC_URL);
+    await registerPasskey(web, authenticator);
+    const other = new SoftAuthenticator("jules.test", PUBLIC_URL);
+    await registerPasskey((await login("autre-admin"))!, other);
+
+    const { verifier, challenge } = pkce();
+    const { callback } = await desktopLogin("ada-desktop", challenge);
+    const code = new URL(callback!.headers.location as string).searchParams.get("code");
+    const { token } = (
+      await app.inject({
+        method: "POST",
+        url: "/v1/auth/desktop/token",
+        payload: { code, verifier },
+      })
+    ).json<{ token: string }>();
+    const desktop = (method: "GET" | "POST" | "PATCH", url: string, payload?: object) =>
+      app.inject({
+        method,
+        url,
+        headers: { authorization: `Bearer ${token}` },
+        ...(payload ? { payload } : {}),
+      });
+    const raise = () => desktop("PATCH", `/v1/repos/${repo.id}`, { autonomy: "L2" });
+    expect((await raise()).json()).toMatchObject({ stepUp: true });
+
+    // La demande vient de la session du desktop, jamais d'une session web.
+    expect((await call(web, "POST", "/v1/step-up/browser", {})).statusCode).toBe(400);
+    const created = await desktop("POST", "/v1/step-up/browser", {
+      purpose: "Relever l'autonomie",
+    });
+    const { request } = created.json<{ request: string }>();
+    expect(request).toMatch(/^[A-Za-z0-9_-]{43}$/);
+
+    // Dans le navigateur, sans session : la demande désigne la session à renforcer.
+    const browser = (url: string, payload: object) =>
+      app.inject({ method: "POST", url, headers: { origin: PUBLIC_URL }, payload });
+    expect(
+      (await browser("/v1/step-up/browser/options", { request: "x".repeat(43) })).statusCode,
+    ).toBe(404);
+    const opened = (await browser("/v1/step-up/browser/options", { request })).json<{
+      purpose: string;
+      options: { challenge: string };
+    }>();
+    expect(opened.purpose).toBe("Relever l'autonomie");
+    // La passkey d'une autre personne ne renforce pas cette session.
+    const foreign = await browser("/v1/step-up/browser/verify", {
+      request,
+      response: other.authenticate(opened.options.challenge),
+    });
+    expect(foreign.statusCode).toBe(400);
+    expect((await raise()).json()).toMatchObject({ stepUp: true });
+
+    const again = (await browser("/v1/step-up/browser/options", { request })).json<{
+      options: { challenge: string };
+    }>();
+    const verified = await browser("/v1/step-up/browser/verify", {
+      request,
+      response: authenticator.authenticate(again.options.challenge),
+    });
+    expect(verified.json()).toEqual({ ok: true });
+    expect((await raise()).statusCode).toBe(200);
+    // La demande ne sert qu'une fois.
+    expect((await browser("/v1/step-up/browser/options", { request })).statusCode).toBe(404);
+  });
+
   it("autorise la webview Tauri par CORS, sans cookie, et aucune autre origine", async () => {
     const preflight = await app.inject({
       method: "OPTIONS",

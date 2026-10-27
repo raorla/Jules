@@ -21,6 +21,9 @@ async function openLocalDesktop(page: Page, second: string) {
         url: api,
       };
       w.__started = 0;
+      // Fenêtre native simulée : elle répond selon `__accept`, puis signe comme le shell.
+      w.__purposes = [];
+      w.__accept = true;
       // Le trousseau simulé survit au rechargement de la page, comme le vrai.
       const apiKeys = (): string[] =>
         JSON.parse(sessionStorage.getItem("jules.test.apikeys") ?? "[]") as string[];
@@ -62,6 +65,35 @@ async function openLocalDesktop(page: Page, second: string) {
           setApiKey: (key: string) => {
             sessionStorage.setItem("jules.test.apikeys", JSON.stringify([...apiKeys(), key]));
             return Promise.resolve(status);
+          },
+          confirmStepUp: async (challenge: string, purpose: string) => {
+            (w.__purposes as string[]).push(purpose);
+            if (!w.__accept) {
+              return null;
+            }
+            const key = await crypto.subtle.importKey(
+              "jwk",
+              {
+                kty: "OKP",
+                crv: "Ed25519",
+                d: "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A",
+                x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+              },
+              { name: "Ed25519" },
+              false,
+              ["sign"],
+            );
+            const signature = new Uint8Array(
+              await crypto.subtle.sign(
+                { name: "Ed25519" },
+                key,
+                new TextEncoder().encode(`jules:local-step-up:${challenge}`),
+              ),
+            );
+            return btoa(String.fromCharCode(...signature))
+              .replace(/\+/g, "-")
+              .replace(/\//g, "_")
+              .replace(/=+$/, "");
           },
           loginSecret: () => Promise.resolve({ secret, login: "ada" }),
           pickFolder: () => Promise.resolve(folder),
@@ -115,6 +147,25 @@ test("mode local : isolation affichée, dossiers, merge par le bouton, puis mode
   await expect(folders).toContainText("local/site");
   await expect(folders).toContainText(second);
 
+  // Action sensible : la fenêtre native du shell, sans dialogue dans la page ni passkey.
+  await expect(page.locator(".card", { hasText: "Passkeys" })).toContainText("fenêtre du système");
+  const levels = page.getByRole("group", { name: "Repos et autonomie local/site" });
+  const purposes = () =>
+    page.evaluate(() => (window as unknown as { __purposes: string[] }).__purposes);
+  await page.evaluate(() => {
+    (window as unknown as { __accept: boolean }).__accept = false;
+  });
+  await levels.getByRole("button", { name: "L1" }).click();
+  await expect.poll(purposes).toEqual(["relever l'autonomie"]);
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(levels.getByRole("button", { name: "L0" })).toHaveAttribute("aria-pressed", "true");
+  await page.evaluate(() => {
+    (window as unknown as { __accept: boolean }).__accept = true;
+  });
+  await levels.getByRole("button", { name: "L1" }).click();
+  await expect(levels.getByRole("button", { name: "L1" })).toHaveAttribute("aria-pressed", "true");
+  expect(await purposes()).toHaveLength(2);
+
   // La clé se remplace depuis les réglages ; elle n'est jamais réaffichée.
   const apiKey = page.locator(".card", { hasText: "Rangée dans le trousseau du système" });
   await expect(apiKey).not.toContainText(API_KEY);
@@ -167,6 +218,7 @@ test("mode local : sans Docker ni Podman, l'app aide à en installer un", async 
         stop: () => Promise.resolve(),
         hasApiKey: () => Promise.reject(new Error("jamais appelé")),
         setApiKey: () => Promise.reject(new Error("jamais appelé")),
+        confirmStepUp: () => Promise.reject(new Error("jamais appelé")),
         loginSecret: () => Promise.reject(new Error("jamais appelé")),
         pickFolder: () => Promise.resolve(null),
       },

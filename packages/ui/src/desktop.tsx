@@ -44,6 +44,11 @@ export type LocalStack = {
   hasApiKey(): Promise<boolean>;
   /** Range la clé API dans le trousseau ; si la pile tourne, le worker est relancé pour la recevoir. */
   setApiKey(key: string): Promise<LocalStatus>;
+  /**
+   * Action sensible : fenêtre native du shell, puis signature du défi par la clé du trousseau, que la
+   * page ne voit jamais. `null` : la personne a annulé.
+   */
+  confirmStepUp(challenge: string, purpose: string): Promise<string | null>;
   /** Secret de connexion à l'api locale, tiré au premier lancement et rangé dans le trousseau. */
   loginSecret(): Promise<{ secret: string; login: string }>;
   /** Sélecteur de dossier du système. */
@@ -60,6 +65,8 @@ export type DesktopBridge = {
   clearToken(server: string): Promise<void>;
   /** OAuth dans le navigateur du système, retour sur l'adresse de bouclage, PKCE (RFC 8252). */
   login(server: string): Promise<{ code: string; verifier: string }>;
+  /** Mode connecté : ouvre la page de confirmation du serveur dans le navigateur du système. */
+  openStepUp(server: string, request: string): Promise<void>;
   notify(notification: DesktopNotification): Promise<void>;
   setTrayCount(count: number): Promise<void>;
   openInEditor(path: string): Promise<void>;

@@ -11,6 +11,7 @@ echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "erreur : versio
 # Les variables que l'app fournit au lancement ne servent pas à construire : valeurs neutres.
 JULES_VERSION="$version" \
   JULES_HANDOFF_DIR=/build JULES_LOCAL_ROOT=/build JULES_LOCAL_RUNS_DIR=/build \
-  JULES_LOCAL_LOGIN_HASH=build JULES_SECRETS_HANDOFF_TOKEN=build JULES_SECRETS_HANDOFF_URL=unix:/build \
+  JULES_LOCAL_LOGIN_HASH=build JULES_LOCAL_STEPUP_PUBLIC_KEY=build \
+  JULES_SECRETS_HANDOFF_TOKEN=build JULES_SECRETS_HANDOFF_URL=unix:/build \
   docker compose -f deploy/local/compose.yaml --profile images build
 echo "Images Jules $version construites : relance le mode local depuis l'app."

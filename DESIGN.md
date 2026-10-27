@@ -144,6 +144,7 @@ Ils sont construits sur les recettes du skill.
 - Notifications natives, avec un texte court qui nomme l'environnement : « Production · app-prod : approbation demandée ».
 - Premier lancement : le choix du mode, deux tuiles (16 px, fond `--wash`) dans la carte de connexion, « Sur cette machine » et « Avec un serveur Jules ». « Changer de mode » reste accessible depuis la connexion et les réglages, sans réinstaller.
 - Mode local : sans Docker ni Podman, la carte de connexion explique quoi installer, avec les liens. La demande de merge locale est une carte d'attention (`.ac`) sur la page de la tâche, avec le bouton crème « Merger dans la branche de base » ; un refus (dossier modifié, conflit) s'affiche en puce `crit` avec sa raison.
+- Action sensible (la webview n'a pas de passkey) : en mode connecté, le dialogue propose « Ouvrir le navigateur » (icône de lien externe) puis attend, bouton désactivé ; la page `/stepup` du serveur, dans le navigateur, reprend la carte de connexion : titre en deux tons, but de l'action en gras, bouton crème « Utiliser ma passkey », et sans passkey un lien vers l'interface web. En mode local, une fenêtre native du système remplace le dialogue.
 
 ## 12. Vérification
 

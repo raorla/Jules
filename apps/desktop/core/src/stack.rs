@@ -50,6 +50,8 @@ pub struct StackConfig<'a> {
     /// Dossier du socket de remise (Linux) : monté dans le worker.
     pub handoff_dir: Option<&'a str>,
     pub login_hash: &'a str,
+    /// Clé publique Ed25519 des confirmations du desktop ; la clé privée reste dans le trousseau.
+    pub step_up_public_key: &'a str,
     /// uid:gid de la personne (Linux) : le worker écrit dans ses dossiers avec ses droits.
     pub user: Option<&'a str>,
     pub docker_gid: Option<&'a str>,
@@ -75,6 +77,7 @@ pub fn compose_env(config: &StackConfig) -> Vec<(&'static str, String)> {
         ("JULES_SECRETS_HANDOFF_URL", config.handoff_url.to_string()),
         ("JULES_SECRETS_HANDOFF_TOKEN", config.handoff_token.to_string()),
         ("JULES_LOCAL_LOGIN_HASH", config.login_hash.to_string()),
+        ("JULES_LOCAL_STEPUP_PUBLIC_KEY", config.step_up_public_key.to_string()),
         (
             "JULES_DOCKER_SOCKET",
             match config.engine {
@@ -173,6 +176,7 @@ mod tests {
             handoff_token: "jeton-a-usage-unique",
             handoff_dir: Some("/run/user/1000/jules"),
             login_hash: "ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0",
+            step_up_public_key: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
             user: Some("1000:1000"),
             docker_gid: Some("984"),
             version: "0.1.0",
@@ -182,6 +186,7 @@ mod tests {
         assert_eq!(get("JULES_SANDBOX_RUNTIME"), Some("runsc"));
         assert_eq!(get("JULES_LOCAL_LOGIN_HASH"), Some(config.login_hash));
         assert_eq!(get("JULES_LOCAL_USER"), Some("1000:1000"));
+        assert_eq!(get("JULES_LOCAL_STEPUP_PUBLIC_KEY"), Some(config.step_up_public_key));
         assert!(env.iter().all(|(k, _)| !k.contains("MASTER_KEY") && !k.contains("API_KEY")));
         assert_eq!(compose_command(EngineKind::Podman).0, "podman");
     }

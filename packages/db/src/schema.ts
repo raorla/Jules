@@ -491,7 +491,11 @@ export const webauthnChallenges = pgTable("webauthn_challenges", {
   sessionId: uuid("session_id")
     .notNull()
     .references(() => sessions.id),
-  kind: text("kind", { enum: ["register", "step_up"] }).notNull(),
+  /**
+   * `browser` : demande de confirmation du desktop connecté, faite dans le navigateur du système
+   * (le défi est l'identifiant de la demande) ; `keychain` : défi signé par le shell en mode local.
+   */
+  kind: text("kind", { enum: ["register", "step_up", "browser", "keychain"] }).notNull(),
   challenge: text("challenge").notNull(),
   /** Action sensible que la passkey va autoriser. */
   purpose: text("purpose").notNull(),

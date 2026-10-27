@@ -109,14 +109,19 @@
     "passkeys": "Passkeys",
     "passkey_add": "Add a passkey",
     "passkey_added": "Passkey saved.",
-    "write_only": "Write-only: once saved, a secret is never shown again."
+    "write_only": "Write-only: once saved, a secret is never shown again.",
+    "passkeys_desktop": "Register your passkeys in your server's web interface: the app uses them through your browser.",
+    "passkeys_local": "In local mode, sensitive actions are confirmed in a system window, without a passkey."
   },
   "stepup": {
     "title": "Confirm with your passkey",
     "text": "This action is sensitive: Jules asks for your passkey, even with an open session.",
     "confirm": "Use my passkey",
     "cancel": "Cancel",
-    "none": "Add a passkey in settings first."
+    "none": "Add a passkey in settings first.",
+    "browser_text": "This action is sensitive. The app's webview has no passkey support: confirmation opens in your browser, on your Jules server. Come back here afterwards, the action carries on by itself.",
+    "browser": "Open the browser",
+    "browser_waiting": "Confirm in your browser…"
   },
   "stop": {
     "title": "Stop every run?",
@@ -434,5 +439,13 @@
     "api_key_replace": "Replace the key",
     "api_key_saving": "Restarting the worker…",
     "api_key_replaced": "Key replaced, the worker has it."
+  },
+  "stepup_page": {
+    "subtitle": "confirm an action.",
+    "loading": "Reading the app's request…",
+    "text": "The Jules app asks for your passkey for this action:",
+    "done": "Confirmed. Go back to the Jules app: the action carries on.",
+    "no_passkey": "No passkey on your account. Sign in to the web interface, add a passkey in Settings, then reload this page: the request stays valid for 5 minutes.",
+    "open_web": "Open the web interface"
   }
 }

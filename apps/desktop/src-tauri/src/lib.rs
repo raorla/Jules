@@ -14,10 +14,12 @@ use jules_desktop_core::callback::parse_callback;
 use jules_desktop_core::engine::EngineKind;
 use jules_desktop_core::local::{self, Vault};
 use jules_desktop_core::pkce::{login_url, random_token, Pkce};
+use jules_desktop_core::stepup;
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent, Wry};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -110,6 +112,40 @@ async fn login(app: AppHandle, server: String) -> Result<LoginResult, String> {
         .await
         .map_err(|e| e.to_string())??;
     Ok(LoginResult { code, verifier: pkce.verifier })
+}
+
+/// Mode connecté : la webview n'a pas de passkey, et son origine n'est pas celle du serveur. La passkey
+/// se fait donc dans le navigateur du système, sur la page de confirmation du serveur.
+#[tauri::command]
+fn open_step_up(app: AppHandle, server: String, request: String) -> Result<(), String> {
+    let url = stepup::browser_url(&server, &request)?;
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Mode local : fenêtre native, que la page ne peut ni imiter ni valider, puis signature du défi de
+/// l'api par la clé du trousseau. `None` : la personne a annulé.
+#[tauri::command]
+async fn local_confirm_step_up(app: AppHandle, challenge: String, purpose: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut dialog = app
+            .dialog()
+            .message(stepup::dialog_text(&purpose))
+            .title("Jules : confirmer une action sensible")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom("Confirmer".into(), "Annuler".into()));
+        if let Some(window) = app.get_webview_window("main") {
+            dialog = dialog.parent(&window);
+        }
+        if !dialog.blocking_show() {
+            return Ok(None);
+        }
+        let seed = Keychain
+            .get(local::STEP_UP_KEY_ENTRY)?
+            .ok_or("clé de confirmation absente du trousseau : relance le mode local")?;
+        stepup::sign(&seed, &challenge).map(Some)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -287,6 +323,7 @@ pub fn run() {
             token_set,
             token_delete,
             login,
+            open_step_up,
             notify,
             set_tray_count,
             open_in_editor,
@@ -295,6 +332,7 @@ pub fn run() {
             local_stop,
             local_has_api_key,
             local_set_api_key,
+            local_confirm_step_up,
             local_login_secret,
             local_container_path
         ])

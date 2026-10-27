@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto";
 import type { APIRequestContext, Page } from "@playwright/test";
 
 const GITHUB = "http://127.0.0.1:4311";
@@ -33,4 +34,33 @@ export async function addVirtualAuthenticator(page: Page) {
       automaticPresenceSimulation: true,
     },
   });
+}
+
+/**
+ * Demande de confirmation d'un desktop connecté, comme la crée l'app : connexion PKCE du shell, puis
+ * `POST /v1/step-up/browser` avec le jeton porteur. La page `/stepup` l'ouvre ensuite sans session.
+ */
+export async function desktopStepUpRequest(
+  request: APIRequestContext,
+  login: string,
+  purpose: string,
+): Promise<string> {
+  const verifier = randomBytes(32).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  await request.post(`${GITHUB}/__as`, { data: { login } });
+  const redirect = encodeURIComponent("http://127.0.0.1:59999/callback");
+  const start = await request.get(
+    `/v1/auth/github?client=desktop&challenge=${challenge}&redirect=${redirect}&state=etat-desktop-0123456789`,
+    { maxRedirects: 0 },
+  );
+  const authorize = await request.get(start.headers().location ?? "", { maxRedirects: 0 });
+  const callback = await request.get(authorize.headers().location ?? "", { maxRedirects: 0 });
+  const code = new URL(callback.headers().location ?? "").searchParams.get("code");
+  const exchange = await request.post("/v1/auth/desktop/token", { data: { code, verifier } });
+  const { token } = (await exchange.json()) as { token: string };
+  const created = await request.post("/v1/step-up/browser", {
+    headers: { authorization: `Bearer ${token}` },
+    data: { purpose },
+  });
+  return ((await created.json()) as { request: string }).request;
 }

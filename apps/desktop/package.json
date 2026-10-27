@@ -9,7 +9,7 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p e2e/tsconfig.json",
     "test": "vitest run --dir src",
     "tauri": "tauri",
-    "e2e": "vite build && playwright test -c e2e"
+    "e2e": "vite build && pnpm --filter @jules/web build && playwright test -c e2e"
   },
   "dependencies": {
     "@jules/ui": "workspace:*",

@@ -1,15 +1,26 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createPrivateKey, randomBytes, sign } from "node:crypto";
 import { DEFAULT_ORG_ID, and, eq, outbox, registerLocalRepo, tasks } from "@jules/db";
 import { startTestDatabase, type TestDatabase } from "@jules/db/testing";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApi } from "../src/app.js";
-import { allowedLocalPath } from "../src/local-routes.js";
+import { allowedLocalPath, verifyStepUpSignature } from "../src/local-routes.js";
 
 // Mode local (M10) : l'api du desktop, sans GitHub. Connexion par le secret du trousseau, dossiers
 // git comme repos, merge demandé par le bouton de l'app et exécuté par le worker.
 
 const SECRET = randomBytes(32).toString("base64url");
+// Clé de confirmation du trousseau : celle du vecteur 1 de la RFC 8032, comme dans le shell
+// (apps/desktop/core/src/stepup.rs), pour vérifier ici ce que le shell signe.
+const SEED = Buffer.from("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60", "hex");
+const STEP_UP_PUBLIC = "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo";
+const shellKey = createPrivateKey({
+  key: { kty: "OKP", crv: "Ed25519", d: SEED.toString("base64url"), x: STEP_UP_PUBLIC },
+  format: "jwk",
+});
+/** Ce que fait le shell après le clic dans sa fenêtre native. */
+const shellSign = (challenge: string, key = shellKey) =>
+  sign(null, Buffer.from(`jules:local-step-up:${challenge}`), key).toString("base64url");
 let t: TestDatabase;
 let app: FastifyInstance;
 
@@ -23,6 +34,7 @@ beforeAll(async () => {
     local: {
       loginHash: createHash("sha256").update(SECRET).digest("base64url"),
       roots: ["/home/ada/projets"],
+      stepUpPublicKey: STEP_UP_PUBLIC,
     },
   });
 });
@@ -51,7 +63,10 @@ const as = (token: string, method: "GET" | "POST", url: string, payload?: object
 
 describe("mode local : connexion", () => {
   it("le secret du trousseau ouvre une session desktop admin ; un autre secret est refusé", async () => {
-    expect((await app.inject({ url: "/v1/health" })).json()).toMatchObject({ mode: "local" });
+    expect((await app.inject({ url: "/v1/health" })).json()).toMatchObject({
+      mode: "local",
+      stepUp: "keychain",
+    });
     const bad = await app.inject({
       method: "POST",
       url: "/v1/auth/local",
@@ -171,5 +186,65 @@ describe("mode local : merge par le bouton", () => {
       })
       .returning();
     expect((await as(token, "POST", `/v1/tasks/${task!.id}/merge`)).statusCode).toBe(409);
+  });
+});
+
+describe("mode local : confirmation des actions sensibles par le trousseau", () => {
+  it("vérifie la signature produite par le shell (même vecteur que le cœur Rust)", () => {
+    const challenge = "defi-de-test-0123456789abcdefghijklmnop";
+    const fromRust =
+      "NKjwF_f_4_ldDTp6fYJ2FbDiTKPdEenirp-MT6jWzCbXk8qCI2_xPAvPcNCB-w98nocM5gr7-Bv1Mw27f0e-Aw";
+    expect(shellSign(challenge)).toBe(fromRust);
+    expect(verifyStepUpSignature(STEP_UP_PUBLIC, challenge, fromRust)).toBe(true);
+    expect(verifyStepUpSignature(STEP_UP_PUBLIC, `${challenge}x`, fromRust)).toBe(false);
+    expect(verifyStepUpSignature(STEP_UP_PUBLIC, challenge, "court")).toBe(false);
+    expect(verifyStepUpSignature("pas-une-cle", challenge, fromRust)).toBe(false);
+  });
+
+  it("relève l'autonomie après un défi signé par la clé du trousseau, une seule fois", async () => {
+    const token = await localLogin();
+    const repo = await registerLocalRepo(t.db, {
+      orgId: DEFAULT_ORG_ID,
+      path: "/home/ada/projets/autonomie",
+    });
+    const raise = () =>
+      app.inject({
+        method: "PATCH",
+        url: `/v1/repos/${repo.id}`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { autonomy: "L1" },
+      });
+    expect((await raise()).json()).toMatchObject({ stepUp: true });
+    const challenge = async () =>
+      (
+        await as(token, "POST", "/v1/auth/local/step-up/challenge", {
+          purpose: "Relever l'autonomie",
+        })
+      ).json<{ challenge: string }>().challenge;
+    const confirm = (signature: string) =>
+      as(token, "POST", "/v1/auth/local/step-up", { signature });
+
+    // Signée par une autre clé que celle du trousseau : refusée, et le défi est brûlé.
+    const other = createPrivateKey({
+      key: {
+        kty: "OKP",
+        crv: "Ed25519",
+        d: randomBytes(32).toString("base64url"),
+        x: STEP_UP_PUBLIC,
+      },
+      format: "jwk",
+    });
+    const first = await challenge();
+    expect((await confirm(shellSign(first, other))).statusCode).toBe(403);
+    expect((await confirm(shellSign(first))).statusCode).toBe(403);
+    expect((await raise()).json()).toMatchObject({ stepUp: true });
+
+    const second = await challenge();
+    const confirmed = await confirm(shellSign(second));
+    expect(confirmed.statusCode).toBe(200);
+    expect(confirmed.json<{ stepUpUntil: string }>().stepUpUntil).toBeTruthy();
+    expect((await raise()).statusCode).toBe(200);
+    // Rejouée, la même signature ne vaut plus rien.
+    expect((await confirm(shellSign(second))).statusCode).toBe(403);
   });
 });

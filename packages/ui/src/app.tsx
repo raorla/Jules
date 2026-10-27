@@ -5,6 +5,7 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  useRouterState,
 } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { api, configureApi, useLiveUpdates, type Me } from "./api.js";
@@ -24,12 +25,21 @@ import {
   TasksPage,
 } from "./pages.js";
 import { Shell } from "./shell.js";
+import { BrowserStepUpPage } from "./stepup.js";
 import { applyTheme } from "./theme.js";
 
 // L'application, partagée par le web (apps/web) et le desktop (apps/desktop, Tauri).
 
 function Root() {
-  const me = useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/v1/me"), retry: false });
+  // Page de confirmation du desktop connecté, ouverte dans le navigateur du système : sans session.
+  const confirming = useRouterState({ select: (s) => s.location.pathname === "/stepup" });
+  const me = useQuery({
+    queryKey: ["me"],
+    queryFn: () => api<Me>("/v1/me"),
+    retry: false,
+    enabled: !confirming,
+  });
+  if (confirming) return <BrowserStepUpPage />;
   if (me.isLoading) return null;
   if (!me.data) return <LoginPage />;
   return <Authenticated me={me.data} />;
@@ -92,6 +102,7 @@ const routes = [
     component: DeploymentsPage,
   }),
   createRoute({ getParentRoute: () => rootRoute, path: "/security", component: SecurityRoute }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/stepup", component: () => null }),
 ];
 const router = createRouter({ routeTree: rootRoute.addChildren(routes) });
 

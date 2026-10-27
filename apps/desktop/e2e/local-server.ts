@@ -112,6 +112,8 @@ const app = await buildApi({
   local: {
     loginHash: createHash("sha256").update(LOCAL_SECRET).digest("base64url"),
     roots: [root],
+    // Clé de confirmation du trousseau simulé (vecteur 1 de la RFC 8032, comme dans local.spec.ts).
+    stepUpPublicKey: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
   },
   desktopOrigins: ["http://localhost:4320"],
 });

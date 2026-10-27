@@ -1,6 +1,6 @@
 import { AxeBuilder } from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
-import { loginAs } from "./helpers.js";
+import { addVirtualAuthenticator, desktopStepUpRequest, loginAs } from "./helpers.js";
 
 // DESIGN.md §12 : captures à 1280 et 390 px dans les deux thèmes, contrastes vérifiés par axe-core,
 // aucun défilement horizontal, et chaque puce colorée porte un texte.
@@ -13,6 +13,8 @@ const SCREENS = [
   { name: "servers", path: "/servers", ready: "web-staging" },
   { name: "deployments", path: "/deployments", ready: "Déploiements par semaine" },
   { name: "security", path: "/security", ready: "Critiques et hauts ouverts" },
+  // Ouverte par le desktop connecté dans le navigateur du système, sans session.
+  { name: "stepup", path: "stepup", ready: "relever l'autonomie" },
 ] as const;
 
 for (const colorScheme of ["dark", "light"] as const) {
@@ -22,14 +24,26 @@ for (const colorScheme of ["dark", "light"] as const) {
 
       for (const screen of SCREENS) {
         test(screen.name, async ({ page, request }) => {
-          await loginAs(page, request, "root");
-          if (screen.path.startsWith("task:")) {
-            await page
-              .getByRole("link", { name: new RegExp(screen.path.slice(5)) })
-              .first()
-              .click();
+          if (screen.path === "stepup") {
+            // vera, pour laisser root et ada sans passkey (flows.spec.ts) : sa passkey s'enregistre
+            // dans l'interface web, puis la page s'ouvre comme dans le navigateur du système.
+            await addVirtualAuthenticator(page);
+            await loginAs(page, request, "vera");
+            await page.goto("/settings");
+            await page.getByRole("button", { name: "Ajouter une passkey" }).click();
+            await expect(page.locator(".chip.ok").first()).toBeVisible();
+            const id = await desktopStepUpRequest(request, "vera", "relever l'autonomie");
+            await page.goto(`/stepup?request=${id}`);
           } else {
-            await page.goto(screen.path);
+            await loginAs(page, request, "root");
+            if (screen.path.startsWith("task:")) {
+              await page
+                .getByRole("link", { name: new RegExp(screen.path.slice(5)) })
+                .first()
+                .click();
+            } else {
+              await page.goto(screen.path);
+            }
           }
           await expect(page.getByText(screen.ready, { exact: true }).first()).toBeVisible();
           await expect(page.locator("html")).toHaveClass(

@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Fingerprint, Sparkles } from "lucide-react";
-import { ApiError, stepUp, type TaskState } from "./api.js";
+import { ExternalLink, Fingerprint, Sparkles } from "lucide-react";
+import { ApiError, stepUp, stepUpInBrowser, stepUpWithKeychain, type TaskState } from "./api.js";
+import { useDesktop, useDesktopSession } from "./desktop.js";
 
 // Composants propres à Jules (DESIGN.md §7), sur les recettes du skill. Le texte venu d'un agent est
 // toujours rendu comme du texte, jamais injecté comme du HTML (test/guards.test.ts le vérifie).
@@ -378,11 +379,18 @@ export function Dialog({
  */
 export function useSensitiveAction() {
   const { t } = useTranslation();
+  const bridge = useDesktop();
+  const session = useDesktopSession();
   const [pending, setPending] = useState<
     { purpose: string; run: () => Promise<unknown>; resolve: (ok: boolean) => void } | undefined
   >();
   const [error, setError] = useState<string | undefined>();
   const [failure, setFailure] = useState<string | undefined>();
+  const [waiting, setWaiting] = useState(false);
+  const browser = useRef<AbortController | undefined>(undefined);
+  // Desktop connecté : la passkey se fait dans le navigateur du système (la webview n'en a pas).
+  const inBrowser = bridge !== undefined && session?.mode === "server";
+  const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
   const run = (purpose: string, action: () => Promise<unknown>) =>
     new Promise<boolean>((resolve) => {
@@ -392,7 +400,21 @@ export function useSensitiveAction() {
           resolve(true);
         })
         .catch((e: unknown) => {
-          if (e instanceof ApiError && e.stepUp) {
+          const local = session?.mode === "local" ? bridge?.local : undefined;
+          if (e instanceof ApiError && e.stepUp && local) {
+            // Mode local : la fenêtre native du shell tient lieu de dialogue et de passkey.
+            stepUpWithKeychain(purpose, (challenge, why) => local.confirmStepUp(challenge, why))
+              .then(async (confirmed) => {
+                if (confirmed) {
+                  await action();
+                }
+                resolve(confirmed);
+              })
+              .catch((err: unknown) => {
+                setFailure(message(err));
+                resolve(false);
+              });
+          } else if (e instanceof ApiError && e.stepUp) {
             setError(undefined);
             setPending({ purpose, run: action, resolve });
           } else {
@@ -407,6 +429,7 @@ export function useSensitiveAction() {
     <Dialog
       open={pending !== undefined}
       onClose={() => {
+        browser.current?.abort();
         pending?.resolve(false);
         setPending(undefined);
       }}
@@ -416,6 +439,7 @@ export function useSensitiveAction() {
           <button
             className="pill"
             onClick={() => {
+              browser.current?.abort();
               pending?.resolve(false);
               setPending(undefined);
             }}
@@ -424,12 +448,28 @@ export function useSensitiveAction() {
           </button>
           <button
             className="pill primary"
+            disabled={waiting}
             onClick={() => {
               if (!pending) return;
-              const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+              const confirm = () => {
+                if (!inBrowser) {
+                  return stepUp(pending.purpose);
+                }
+                const controller = new AbortController();
+                browser.current = controller;
+                setWaiting(true);
+                setError(undefined);
+                return stepUpInBrowser(
+                  pending.purpose,
+                  (server, request) => bridge.openStepUp(server, request),
+                  controller.signal,
+                ).finally(() => {
+                  setWaiting(false);
+                });
+              };
               // Deux échecs distincts : la passkey elle-même (aucune enregistrée : 409), puis
               // l'action rejouée, dont l'erreur est montrée telle quelle.
-              stepUp(pending.purpose).then(
+              confirm().then(
                 () =>
                   pending.run().then(
                     () => {
@@ -448,13 +488,17 @@ export function useSensitiveAction() {
               );
             }}
           >
-            <Fingerprint aria-hidden="true" />
-            {t("stepup.confirm")}
+            {inBrowser ? <ExternalLink aria-hidden="true" /> : <Fingerprint aria-hidden="true" />}
+            {inBrowser
+              ? waiting
+                ? t("stepup.browser_waiting")
+                : t("stepup.browser")
+              : t("stepup.confirm")}
           </button>
         </>
       }
     >
-      <p className="ink-2">{t("stepup.text")}</p>
+      <p className="ink-2">{inBrowser ? t("stepup.browser_text") : t("stepup.text")}</p>
       {error && (
         <p role="alert" className="chip crit">
           {error}

@@ -2,7 +2,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 
 // DoD M9 : un desktop trop ancien demande une mise à jour ; une approbation DevOps se donne depuis
-// une notification. Le pont Tauri est simulé ; tout le reste est réel (api, PKCE, base).
+// une notification ; une action sensible se confirme par une passkey dans le navigateur du système.
+// Le pont Tauri est simulé ; tout le reste est réel (api, PKCE, base, cérémonie WebAuthn).
 
 const API = "http://localhost:4310";
 const GITHUB = "http://127.0.0.1:4311";
@@ -58,6 +59,11 @@ async function openDesktop(page: Page, version: string) {
         return Promise.resolve();
       },
       login: (server: string) => w.julesTestLogin(server),
+      // Comme le shell (apps/desktop/core/src/stepup.rs) : la page de confirmation du serveur.
+      openStepUp: (server: string, request: string) => {
+        w.__stepUp = `${server}/stepup?request=${request}`;
+        return Promise.resolve();
+      },
       notify: (n: unknown) => Promise.resolve(void notifications.push(n)),
       setTrayCount: (count: number) => Promise.resolve(void (w.__tray = count)),
       openInEditor: () => Promise.resolve(),
@@ -130,4 +136,68 @@ test("connexion par PKCE, puis approbation DevOps depuis une notification", asyn
     decision: string;
   }[];
   expect(commands[0]).toEqual({ name: "approve", source: "desktop", decision: "pending" });
+});
+
+test("action sensible du desktop connecté : la passkey se fait dans le navigateur du système", async ({
+  page,
+  context,
+  request,
+}) => {
+  await openDesktop(page, "0.1.0");
+  await page.getByRole("textbox", { name: "Adresse de ton serveur Jules" }).fill(API);
+  await page.getByRole("button", { name: "Vérifier le serveur" }).click();
+  await page.getByRole("button", { name: "Se connecter avec GitHub" }).click();
+  await page.getByRole("link", { name: "Réglages" }).click();
+  // La webview n'a pas de passkey : l'app renvoie à l'interface web pour en enregistrer une.
+  const passkeys = page.locator(".card", { hasText: "Passkeys" });
+  await expect(passkeys).toContainText("interface web de ton serveur");
+  await expect(passkeys.getByRole("button", { name: "Ajouter une passkey" })).toHaveCount(0);
+
+  const levels = page.getByRole("group", { name: /^Repos et autonomie / }).first();
+  await levels.getByRole("button", { name: "L2" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("la confirmation s'ouvre dans ton navigateur");
+  await dialog.getByRole("button", { name: "Ouvrir le navigateur" }).click();
+  await expect(
+    dialog.getByRole("button", { name: "Confirme dans ton navigateur…" }),
+  ).toBeDisabled();
+  const url = await page.evaluate(() => (window as unknown as { __stepUp?: string }).__stepUp);
+  expect(url).toMatch(/^http:\/\/localhost:4310\/stepup\?request=[A-Za-z0-9_-]{43}$/);
+
+  // Le navigateur du système : une autre page, sur le serveur, avec un authentificateur (CDP).
+  const browser = await context.newPage();
+  const cdp = await context.newCDPSession(browser);
+  await cdp.send("WebAuthn.enable");
+  await cdp.send("WebAuthn.addVirtualAuthenticator", {
+    options: {
+      protocol: "ctap2",
+      transport: "internal",
+      hasResidentKey: true,
+      hasUserVerification: true,
+      isUserVerified: true,
+      automaticPresenceSimulation: true,
+    },
+  });
+  // La passkey s'enregistre dans l'interface web, connectée avec le même compte GitHub.
+  await request.post(`${GITHUB}/__as`, { data: { login: "root" } });
+  await browser.goto(`${API}/`);
+  await browser.getByRole("link", { name: "Se connecter avec GitHub" }).click();
+  await browser.getByRole("link", { name: "Réglages" }).click();
+  await browser.getByRole("button", { name: "Ajouter une passkey" }).click();
+  await expect(browser.locator(".card", { hasText: "Passkeys" }).locator(".chip")).not.toHaveCount(
+    0,
+  );
+
+  await browser.goto(url!);
+  await expect(browser.getByText("relever l'autonomie")).toBeVisible();
+  await browser.getByRole("button", { name: "Utiliser ma passkey" }).click();
+  await expect(browser.getByRole("status")).toHaveText(
+    "Confirmé. Retourne dans l'app Jules : l'action continue.",
+  );
+  // De retour dans l'app : la session du desktop est renforcée, l'action rejouée.
+  await expect(dialog).toBeHidden({ timeout: 10_000 });
+  await expect(levels.getByRole("button", { name: "L2" })).toHaveAttribute("aria-pressed", "true");
+  // La demande ne sert qu'une fois.
+  await browser.reload();
+  await expect(browser.getByRole("alert")).toContainText("demande expirée");
 });

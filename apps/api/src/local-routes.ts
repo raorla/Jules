@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, createPublicKey, timingSafeEqual, verify } from "node:crypto";
 import { isAbsolute, normalize, relative } from "node:path";
 import { appendAudit } from "@jules/audit";
 import {
@@ -18,19 +18,52 @@ import {
 } from "@jules/db";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { createSession, guard, sessionOf } from "./session.js";
+import { randomChallenge, saveChallenge, takeChallenge } from "./passkeys.js";
+import { createSession, grantStepUp, guard, sessionOf } from "./session.js";
 
 // Mode local (M10, ARCHITECTURE.md §4.7) : l'api tourne sur la machine, liée à l'adresse de bouclage.
 // Pas de GitHub : le desktop se connecte avec un secret tiré au premier lancement et rangé dans le
 // trousseau ; l'api n'en connaît que le hash. Les dossiers git tiennent lieu de repos, et le merge est
-// le bouton de l'app, exécuté par le worker (effet `local.merge`).
+// le bouton de l'app, exécuté par le worker (effet `local.merge`). Les actions sensibles se confirment
+// dans une fenêtre native du shell, qui signe alors le défi de l'api avec une clé Ed25519 du trousseau
+// (la page ne la voit jamais) : en mode local, c'est ce qui tient lieu de passkey.
 
 export type LocalModeOptions = {
   /** sha256 (base64url) du secret de connexion du desktop. */
   loginHash: string;
   /** Dossiers autorisés (montés au même chemin dans le worker) ; vide : tout chemin absolu. */
   roots: readonly string[];
+  /** Clé publique Ed25519 (base64url) des confirmations signées par le shell. */
+  stepUpPublicKey: string;
 };
+
+/** Domaine de la signature, le même que le shell (apps/desktop/core/src/stepup.rs). */
+const STEP_UP_DOMAIN = "jules:local-step-up:";
+
+/** Signature Ed25519 du défi par la clé du trousseau ; toute autre entrée est refusée. */
+export function verifyStepUpSignature(
+  publicKey: string,
+  challenge: string,
+  signature: unknown,
+): boolean {
+  if (typeof signature !== "string" || !/^[A-Za-z0-9_-]{86}$/.test(signature)) {
+    return false;
+  }
+  try {
+    const key = createPublicKey({
+      key: { kty: "OKP", crv: "Ed25519", x: publicKey },
+      format: "jwk",
+    });
+    return verify(
+      null,
+      Buffer.from(`${STEP_UP_DOMAIN}${challenge}`),
+      key,
+      Buffer.from(signature, "base64url"),
+    );
+  } catch {
+    return false;
+  }
+}
 
 const LOCAL_SESSION_HOURS = 24 * 30;
 const sha256 = (value: string) => createHash("sha256").update(value).digest();
@@ -130,6 +163,51 @@ export function registerLocalRoutes(
       expiresAt: new Date(Date.now() + LOCAL_SESSION_HOURS * 3600_000).toISOString(),
     };
   });
+
+  // Confirmation d'une action sensible : un défi à usage unique, lié à la session, que seul le shell
+  // signe, après le clic de la personne dans sa fenêtre native.
+  app.post<{ Body: { purpose?: unknown } }>(
+    "/v1/auth/local/step-up/challenge",
+    { preHandler: g("viewer") },
+    async (request) => {
+      const session = sessionOf(request);
+      const challenge = randomChallenge();
+      const purpose =
+        typeof request.body.purpose === "string" && request.body.purpose.trim()
+          ? request.body.purpose.trim().slice(0, 100)
+          : "action sensible";
+      await saveChallenge(db, session, "keychain", challenge, purpose);
+      return { challenge };
+    },
+  );
+
+  app.post<{ Body: { signature?: unknown } }>(
+    "/v1/auth/local/step-up",
+    { preHandler: g("viewer") },
+    async (request, reply) => {
+      const session = sessionOf(request);
+      const challenge = await takeChallenge(db, session.id, "keychain");
+      if (
+        !challenge ||
+        !verifyStepUpSignature(
+          options.local.stepUpPublicKey,
+          challenge.challenge,
+          request.body.signature,
+        )
+      ) {
+        return reply.code(403).send({ error: "confirmation refusée" });
+      }
+      const until = await grantStepUp(db, session.id);
+      await appendAudit(db, {
+        orgId: session.orgId,
+        actor: { type: "user", id: session.userId },
+        action: "session.step_up",
+        target: { type: "user", id: session.userId },
+        data: { purpose: challenge.purpose, via: "keychain" },
+      });
+      return { stepUpUntil: until };
+    },
+  );
 
   app.get("/v1/local/repos", { preHandler: g("viewer") }, () =>
     db

@@ -93,6 +93,10 @@ En mode local, le badge en bas de la barre latérale indique l'**isolation** des
 
 Tu changes de mode depuis **Réglages → Mode de l'app**, sans réinstaller.
 
+Les actions sensibles (relever une autonomie, accepter un risque, lever l'arrêt d'urgence…) se confirment autrement dans l'app, dont la fenêtre ne gère pas les passkeys :
+- **mode connecté** : l'app ouvre ton navigateur sur ton serveur Jules, où tu utilises ta passkey ; l'action continue d'elle-même dans l'app. Enregistre tes passkeys depuis l'interface web (**Réglages → Passkeys**) ;
+- **mode local** : une fenêtre du système te demande de confirmer, sans passkey. Ne confirme que ce que tu viens de demander.
+
 ## 8. En cas de problème
 
 - **La tâche est bloquée** : le statut dit pourquoi (gate en échec, budget atteint, chemin protégé touché). Corrige ou ajoute du budget, puis `/jules retry`.
