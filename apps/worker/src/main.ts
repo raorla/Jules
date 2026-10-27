@@ -5,6 +5,7 @@ import { OctokitGitHubApp } from "@jules/forge";
 import { SandboxDriver, parseAllowlist } from "@jules/sandbox";
 import { SecretStore, keyringFromEnv } from "@jules/secrets";
 import { Masker } from "./broker/masking.js";
+import { stopAll } from "./emergency.js";
 import { ANTHROPIC_KEY_SECRET, GITHUB_APP_KEY_SECRET, loadWorkerEnv } from "./config.js";
 import { createLogger } from "./logger.js";
 import { Orchestrator } from "./orchestrator.js";
@@ -39,13 +40,14 @@ privateKey.fill(0);
 apiKey.fill(0);
 await mkdir(env.JULES_RUNS_DIR, { recursive: true, mode: 0o700 });
 
+const driver = new SandboxDriver({
+  runtime: env.JULES_SANDBOX_RUNTIME,
+  egressImage: env.JULES_EGRESS_IMAGE,
+});
 const orchestrator = new Orchestrator({
   db: database.db,
   github,
-  driver: new SandboxDriver({
-    runtime: env.JULES_SANDBOX_RUNTIME,
-    egressImage: env.JULES_EGRESS_IMAGE,
-  }),
+  driver,
   log,
   masker: new Masker([anthropicKey]),
   config: {
@@ -64,6 +66,7 @@ const orchestrator = new Orchestrator({
       budgetUsd: env.JULES_DEVELOPER_BUDGET_USD,
       timeoutMs: env.JULES_DEVELOPER_TIMEOUT_MIN * 60_000,
     },
+    taskBudgetUsd: env.JULES_TASK_BUDGET_USD,
     maxConcurrentRuns: env.JULES_MAX_CONCURRENT_RUNS,
     providerRetryBaseMs: 5 * 60_000,
     maxAttempts: 3,
@@ -76,6 +79,11 @@ const worker = new Worker(
     github,
     log,
     settings: { mention: env.JULES_MENTION, label: env.JULES_LABEL, language: env.JULES_LANGUAGE },
+    taskBudgetCapUsd: env.JULES_TASK_BUDGET_CAP_USD,
+    emergency: {
+      stopAll: (actorId) =>
+        stopAll(database.db, driver, { orgId: DEFAULT_ORG_ID, reason: "/jules stop-all", actorId }),
+    },
   },
   { databaseUrl: env.DATABASE_URL, orchestrator },
 );

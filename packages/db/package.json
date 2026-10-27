@@ -23,7 +23,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "generate": "drizzle-kit generate"
+    "generate": "NODE_OPTIONS=--conditions=@jules/source drizzle-kit generate"
   },
   "dependencies": {
     "@jules/workflow": "workspace:*",

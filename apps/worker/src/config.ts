@@ -35,6 +35,10 @@ export const loadWorkerEnv = () =>
       JULES_LANGUAGE: languageSchema.default("fr"),
       // Sandbox (ARCHITECTURE.md §8). `runc` n'est acceptable qu'en développement.
       JULES_RUNS_DIR: z.string().default("/var/lib/jules/runs"),
+      JULES_INSTANCE: z
+        .string()
+        .regex(/^[\w.-]+$/)
+        .default("default"),
       JULES_PROMPTS_DIR: z.string().optional(),
       JULES_SANDBOX_RUNTIME: z.string().default("runsc"),
       JULES_SANDBOX_IMAGE: z.string().default("jules-sandbox-node:local"),
@@ -49,6 +53,9 @@ export const loadWorkerEnv = () =>
       JULES_DEVELOPER_BUDGET_USD: z.coerce.number().positive().default(15),
       JULES_DEVELOPER_MAX_TURNS: z.coerce.number().int().positive().default(150),
       JULES_DEVELOPER_TIMEOUT_MIN: z.coerce.number().positive().default(45),
+      // Budget d'une tâche, toutes phases comprises ; `/jules budget +n` peut le monter jusqu'au plafond.
+      JULES_TASK_BUDGET_USD: z.coerce.number().positive().default(30),
+      JULES_TASK_BUDGET_CAP_USD: z.coerce.number().positive().default(100),
     }),
   );
 export type WorkerEnv = ReturnType<typeof loadWorkerEnv>;

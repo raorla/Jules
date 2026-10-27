@@ -1,20 +1,12 @@
 import { appendAudit } from "@jules/audit";
-import {
-  eq,
-  events,
-  installations,
-  repos,
-  sql,
-  tasks,
-  users,
-  type DbOrTx,
-  type Tx,
-} from "@jules/db";
+import { eq, events, installations, sql, tasks, type DbOrTx, type Tx } from "@jules/db";
 import { hasAtLeast } from "@jules/forge";
 import { z } from "zod";
 import type { WorkerDeps } from "./deps.js";
 import { enqueueEffect } from "./outbox.js";
-import { detectTrigger, type TaskTrigger } from "./triggers.js";
+import { prepareConversation } from "./conversation.js";
+import { upsertInstallation, upsertRepo, upsertUser } from "./identities.js";
+import { detectTrigger } from "./triggers.js";
 
 // Traitement des webhooks stockés par le gateway. Un événement est traité en deux temps :
 // d'abord les lectures réseau (droits GitHub), puis une seule transaction qui écrit la tâche,
@@ -27,14 +19,6 @@ type EventRow = typeof events.$inferSelect;
 type Outcome = { status: "processed" | "ignored"; reason?: string };
 /** Écritures d'un événement, appliquées dans la transaction qui le marque traité. */
 type Apply = (tx: Tx) => Promise<Outcome>;
-
-function returned<T>(rows: T[], what: string): T {
-  const [row] = rows;
-  if (row === undefined) {
-    throw new Error(`${what} : aucune ligne renvoyée`);
-  }
-  return row;
-}
 
 const ignore =
   (reason: string): Apply =>
@@ -62,65 +46,6 @@ async function claimNext(db: DbOrTx): Promise<EventRow | undefined> {
   }
   const [row] = await db.select().from(events).where(eq(events.id, id));
   return row;
-}
-
-async function upsertInstallation(
-  tx: Tx,
-  orgId: string,
-  values: { githubInstallationId: number; accountLogin: string; accountType: string },
-): Promise<string> {
-  const rows = await tx
-    .insert(installations)
-    .values({ orgId, ...values })
-    .onConflictDoUpdate({
-      target: installations.githubInstallationId,
-      set: { accountLogin: values.accountLogin, updatedAt: sql`now()` },
-    })
-    .returning({ id: installations.id });
-  return returned(rows, "installation").id;
-}
-
-async function upsertRepo(
-  tx: Tx,
-  orgId: string,
-  installationId: string,
-  repo: TaskTrigger["repo"],
-) {
-  const rows = await tx
-    .insert(repos)
-    .values({
-      orgId,
-      forge: "github",
-      installationId,
-      githubRepoId: repo.githubId,
-      fullName: repo.fullName,
-      defaultBranch: repo.defaultBranch,
-      private: repo.private,
-    })
-    .onConflictDoUpdate({
-      target: [repos.forge, repos.githubRepoId],
-      set: {
-        installationId,
-        fullName: repo.fullName,
-        defaultBranch: repo.defaultBranch,
-        private: repo.private,
-        updatedAt: sql`now()`,
-      },
-    })
-    .returning({ id: repos.id });
-  return returned(rows, "repo").id;
-}
-
-async function upsertUser(tx: Tx, orgId: string, sender: TaskTrigger["sender"]): Promise<string> {
-  const rows = await tx
-    .insert(users)
-    .values({ orgId, githubUserId: sender.githubId, login: sender.login, kind: "human" })
-    .onConflictDoUpdate({
-      target: [users.orgId, users.githubUserId],
-      set: { login: sender.login, updatedAt: sql`now()` },
-    })
-    .returning({ id: users.id });
-  return returned(rows, "user").id;
 }
 
 async function prepareTrigger(deps: WorkerDeps, event: EventRow): Promise<Apply> {
@@ -257,8 +182,10 @@ async function prepare(deps: WorkerDeps, event: EventRow): Promise<Apply> {
     return ignore("payload_purged");
   }
   switch (event.event) {
-    case "issues":
     case "issue_comment":
+      // Commande `/jules …` ou réponse attendue d'abord ; sinon, une mention peut créer une tâche.
+      return (await prepareConversation(deps, event)) ?? prepareTrigger(deps, event);
+    case "issues":
       return prepareTrigger(deps, event);
     case "installation":
       return prepareInstallation(event);

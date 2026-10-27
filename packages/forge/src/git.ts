@@ -150,3 +150,21 @@ export async function pushBranch(
 export async function removeDir(dir: string): Promise<void> {
   await rm(dir, { recursive: true, force: true });
 }
+
+/** Contenu d'un fichier à un commit du pristine (config et conventions, lues sur la branche par défaut). */
+export async function readFileAt(
+  repoDir: string,
+  sha: string,
+  path: string,
+  maxBytes = 200_000,
+): Promise<string | undefined> {
+  try {
+    const size = Number((await git(["cat-file", "-s", `${sha}:${path}`], { cwd: repoDir })).trim());
+    if (!Number.isFinite(size) || size > maxBytes) {
+      return undefined;
+    }
+    return await git(["show", `${sha}:${path}`], { cwd: repoDir });
+  } catch {
+    return undefined;
+  }
+}

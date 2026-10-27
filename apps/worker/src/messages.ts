@@ -11,6 +11,10 @@ const STATES: Record<Language, Partial<Record<TaskState, StateText>>> = {
     received: { label: "reçue", phase: "1/9 · Réception" },
     triaging: { label: "en triage", phase: "1/9 · Réception" },
     awaiting_info: { label: "en attente de ta réponse" },
+    specifying: { label: "spec en cours", phase: "2/9 · Spécification" },
+    awaiting_spec_approval: { label: "spec à valider", phase: "2/9 · Spécification (H1)" },
+    designing: { label: "conception en cours", phase: "3/9 · Conception" },
+    awaiting_design_approval: { label: "conception à valider", phase: "3/9 · Conception (H2)" },
     building: { label: "en développement", phase: "4/9 · Développement" },
     verifying: { label: "en vérification", phase: "5/9 · Vérification" },
     awaiting_human_review: { label: "PR prête pour ta review", phase: "8/9 · Review humaine" },
@@ -24,6 +28,10 @@ const STATES: Record<Language, Partial<Record<TaskState, StateText>>> = {
     received: { label: "received", phase: "1/9 · Intake" },
     triaging: { label: "triaging", phase: "1/9 · Intake" },
     awaiting_info: { label: "waiting for your answer" },
+    specifying: { label: "writing the spec", phase: "2/9 · Specification" },
+    awaiting_spec_approval: { label: "spec to approve", phase: "2/9 · Specification (H1)" },
+    designing: { label: "designing", phase: "3/9 · Design" },
+    awaiting_design_approval: { label: "design to approve", phase: "3/9 · Design (H2)" },
     building: { label: "building", phase: "4/9 · Build" },
     verifying: { label: "verifying", phase: "5/9 · Verification" },
     awaiting_human_review: { label: "PR ready for your review", phase: "8/9 · Human review" },
@@ -47,6 +55,14 @@ const TEXT = {
     pr: "Pull request",
     error: "Raison",
     received: "Demande reçue. Ce commentaire sera mis à jour à chaque étape.",
+    triage: "Triage",
+    spec: "Spec",
+    design: "Conception",
+    split: "Découpage proposé",
+    approve:
+      "Réponds `/jules approve` pour valider, ou `/jules revise <ton retour>` pour la faire reprendre.",
+    advice: "Mode conseil (L0) : spec et plan publiés, aucun code ne sera poussé.",
+    files: "Fichiers",
     footer: "Jules ne merge jamais : chaque PR attend la review d'un humain.",
   },
   en: {
@@ -60,6 +76,14 @@ const TEXT = {
     pr: "Pull request",
     error: "Reason",
     received: "Request received. This comment will be updated at every step.",
+    triage: "Triage",
+    spec: "Spec",
+    design: "Design",
+    split: "Proposed split",
+    approve:
+      "Reply `/jules approve` to approve, or `/jules revise <your feedback>` to have it redone.",
+    advice: "Advisor mode (L0): spec and plan published, no code will be pushed.",
+    files: "Files",
     footer: "Jules never merges: every PR waits for a human review.",
   },
 } as const;
@@ -70,10 +94,25 @@ export function statusMarker(taskId: string): string {
 }
 
 export type StatusView = {
-  task: { id: string; state: TaskState; prUrl?: string | null; lastError?: string | null };
+  task: {
+    id: string;
+    state: TaskState;
+    prUrl?: string | null;
+    lastError?: string | null;
+    type?: string | null;
+    size?: string | null;
+    risk?: string | null;
+    autonomy?: string | null;
+  };
   plan?: readonly string[];
   updates?: readonly string[];
   questions?: readonly string[];
+  split?: readonly { title: string; summary: string }[];
+  spec?: {
+    problem: string;
+    acceptanceCriteria: { id: string; given: string; when: string; then: string }[];
+  };
+  design?: { approach: string; files: { path: string; change: string }[] };
 };
 
 /** Le texte d'un agent ne doit pas pouvoir casser la mise en forme ni mentionner des gens. */
@@ -108,8 +147,56 @@ export function renderStatusComment(view: StatusView, language: Language): strin
       t.answer,
     );
   }
+  if (task.type && task.size && task.risk) {
+    lines.push(
+      `**${t.triage}** : \`${task.type}\` · taille \`${task.size}\` · risque \`${task.risk}\`${task.autonomy ? ` · autonomie \`${task.autonomy}\`` : ""}`,
+    );
+  }
+  if (view.split?.length) {
+    lines.push(
+      "",
+      `#### ${t.split}`,
+      ...view.split.map((s) => `- **${quoteAgentText(s.title)}** : ${quoteAgentText(s.summary)}`),
+    );
+  }
+  if (view.spec) {
+    lines.push(
+      "",
+      `<details${task.state === "awaiting_spec_approval" ? " open" : ""}><summary>${t.spec} (${view.spec.acceptanceCriteria.length} critères)</summary>`,
+      "",
+      quoteAgentText(view.spec.problem),
+      "",
+      ...view.spec.acceptanceCriteria.map(
+        (c) =>
+          `- **${c.id}** : étant donné ${quoteAgentText(c.given)}, quand ${quoteAgentText(c.when)}, alors ${quoteAgentText(c.then)}`,
+      ),
+      "",
+      "</details>",
+    );
+  }
+  if (view.design) {
+    lines.push(
+      "",
+      `<details${task.state === "awaiting_design_approval" || task.state === "done" ? " open" : ""}><summary>${t.design}</summary>`,
+      "",
+      quoteAgentText(view.design.approach),
+      "",
+      `${t.files} : ${view.design.files.map((f) => `\`${quoteAgentText(f.path)}\` (${f.change})`).join(", ")}`,
+      "",
+      "</details>",
+    );
+  }
+  if (task.state === "awaiting_spec_approval" || task.state === "awaiting_design_approval") {
+    lines.push("", `> ${t.approve}`);
+  }
+  if (task.state === "done" && task.autonomy === "L0" && !task.prUrl) {
+    lines.push("", t.advice);
+  }
   if (view.plan?.length) {
-    const done = task.state === "awaiting_human_review" || task.state === "done";
+    // Le plan est exécuté dès que la build est livrée.
+    const done = ["verifying", "reviewing", "awaiting_human_review", "learning", "done"].includes(
+      task.state,
+    );
     lines.push(
       "",
       `#### ${t.plan}`,

@@ -191,3 +191,36 @@ describe("de l'événement au commentaire de statut", () => {
     expect(row?.deletedAt).toBeInstanceOf(Date);
   });
 });
+
+describe("arrêt d'urgence depuis GitHub (/jules stop-all)", () => {
+  it("est réservé aux admins", async () => {
+    const calls: string[] = [];
+    github.setRole("carol", "admin");
+    const withEmergency = {
+      ...deps(),
+      emergency: {
+        stopAll: (actorId: string) => {
+          calls.push(actorId);
+          return Promise.resolve({ revokedTokens: 0, killedContainers: 0 });
+        },
+      },
+    };
+
+    await storeEvent(
+      t.db,
+      "issue_comment",
+      issueComment({ body: "/jules stop-all", login: "alice" }),
+    );
+    await drainEvents(withEmergency);
+    expect(calls).toEqual([]);
+
+    await storeEvent(
+      t.db,
+      "issue_comment",
+      issueComment({ body: "/jules stop-all", login: "carol" }),
+    );
+    await drainEvents(withEmergency);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatch(/^github:\d+$/);
+  });
+});

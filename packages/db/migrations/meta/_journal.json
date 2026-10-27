@@ -29,6 +29,20 @@
       "when": 1793092866424,
       "tag": "0003_task_lease",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793094701675,
+      "tag": "0004_m2_workflow",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793095762772,
+      "tag": "0005_outbox_seq",
+      "breakpoints": true
     }
   ]
 }

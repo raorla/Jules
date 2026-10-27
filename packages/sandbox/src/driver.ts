@@ -10,6 +10,8 @@ import type { EgressDecision } from "./egress-proxy.js";
 
 export const SANDBOX_LABEL = "jules.sandbox";
 export const RUN_LABEL = "jules.run";
+/** Instance de Jules propriétaire : l'arrêt d'urgence et le ménage ne touchent que ses conteneurs. */
+export const INSTANCE_LABEL = "jules.instance";
 const EGRESS_ALIAS = "egress";
 const EGRESS_PORT = 3128;
 
@@ -58,6 +60,8 @@ export type DriverOptions = {
   egressImage: string;
   /** Réseau ordinaire, relié à Internet, auquel seuls les egress proxies sont attachés. */
   egressNetwork?: string;
+  /** Nom de l'instance, si plusieurs instances de Jules partagent un hôte. */
+  instance?: string;
 };
 
 /** Démultiplexe la sortie de `docker logs` (en-têtes de 8 octets par trame). */
@@ -79,7 +83,7 @@ export class SandboxDriver {
 
   constructor(options: DriverOptions, docker: Docker = new Docker()) {
     this.#docker = docker;
-    this.#options = { egressNetwork: "jules-egress", ...options };
+    this.#options = { egressNetwork: "jules-egress", instance: "default", ...options };
   }
 
   async #ensureEgressNetwork(): Promise<void> {
@@ -96,7 +100,11 @@ export class SandboxDriver {
 
   async run(spec: RunSpec): Promise<RunOutcome> {
     const limits = { ...DEFAULT_LIMITS, ...spec.limits };
-    const labels = { [SANDBOX_LABEL]: "1", [RUN_LABEL]: spec.runId };
+    const labels = {
+      [SANDBOX_LABEL]: "1",
+      [RUN_LABEL]: spec.runId,
+      [INSTANCE_LABEL]: this.#options.instance,
+    };
     const cleanup: (() => Promise<unknown>)[] = [];
     let egressContainer: Docker.Container | undefined;
     let networkMode = "none";
@@ -228,9 +236,11 @@ export class SandboxDriver {
     return this.#kill({ label: [`${RUN_LABEL}=${runId}`] });
   }
 
-  /** Arrêt d'urgence : tue tous les sandboxes et egress proxies, de toutes les exécutions. */
+  /** Arrêt d'urgence : tue tous les sandboxes et egress proxies de cette instance. */
   async stopAll(): Promise<number> {
-    return this.#kill({ label: [`${SANDBOX_LABEL}=1`] });
+    return this.#kill({
+      label: [`${SANDBOX_LABEL}=1`, `${INSTANCE_LABEL}=${this.#options.instance}`],
+    });
   }
 
   async #kill(filters: Record<string, string[]>): Promise<number> {
@@ -255,7 +265,7 @@ export class SandboxDriver {
     let removed = 0;
     const containers = await this.#docker.listContainers({
       all: true,
-      filters: { label: [`${SANDBOX_LABEL}=1`] },
+      filters: { label: [`${SANDBOX_LABEL}=1`, `${INSTANCE_LABEL}=${this.#options.instance}`] },
     });
     for (const c of containers) {
       const runId = c.Labels[RUN_LABEL];
@@ -268,7 +278,7 @@ export class SandboxDriver {
       }
     }
     const networks = await this.#docker.listNetworks({
-      filters: { label: [`${SANDBOX_LABEL}=1`] },
+      filters: { label: [`${SANDBOX_LABEL}=1`, `${INSTANCE_LABEL}=${this.#options.instance}`] },
     });
     for (const n of networks) {
       const runId = n.Labels?.[RUN_LABEL];

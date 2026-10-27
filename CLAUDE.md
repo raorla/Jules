@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Milestones **M0 (foundations) and M1 (sandbox, broker, end-to-end skeleton) are implemented**: issue → developer agent in a gVisor sandbox → push → draft PR. M2 (state machine, phases 1–3, human gates) is next. The design documents are written in French; keep that language when editing them, and use French for user-facing strings and code comments, matching the existing code.
+Milestones **M0–M2 are implemented**: issue → triage → spec → design (with human gates H1/H2 per risk and autonomy) → developer in a gVisor sandbox → push → draft PR, then the task waits in `verifying`. M3 (verification gates) is next. The design documents are written in French; keep that language when editing them, and use French for user-facing strings and code comments, matching the existing code.
 
 | File | Role |
 |---|---|
@@ -67,7 +67,9 @@ The worker's sandbox tests build `jules-sandbox-node:test` and `jules-egress:tes
 - `apps/worker/src/orchestrator.ts`: claims a task, clones a worker-only "pristine" bare repo, runs the sandbox, exports commits with `git bundle` in a network-less container, checks `policy.decide({action:"push"})`, then writes push + draft PR + status effects in one transaction. `recover()` handles crashes.
 - `packages/sandbox`: Docker driver (per-run internal network with `gateway_mode_ipv4=isolated`, hardened container, per-run egress proxy reached by IP) and the dependency-free egress proxy.
 - `packages/agent-runner`: sandbox entrypoint; Agent SDK `query()` with `settingSources: []`, `strictMcpConfig`, an `env` that replaces everything, and the in-process `jules` MCP server that forwards to the broker.
-- `packages/policy` (pure, 100% coverage enforced) and `packages/artifacts` (zod schemas shared by broker and agent-runner). Prompts live in `prompts/<role>/vN.md`.
+- `packages/policy`, `packages/workflow` (state machine: `transition(ctx, event)`), `packages/risk` and `packages/commands` (`/jules` parsing and required rights) are pure, with 100% coverage enforced by their Vitest config. `packages/artifacts` holds the zod schemas shared by broker and agent-runner (capability inputs, Triage/Spec/Design with gates G1–G3). Prompts live in `prompts/<role>/vN.md`, with shared rules in `prompts/_common.md`.
+- `apps/worker/src/transitions.ts`: the only way to change a task's state (`applyTransition`: optimistic version check, status effect and audit in one transaction). `conversation.ts` turns issue comments into commands or answers.
 - `packages/forge`: the `GitHubApp` port, the Octokit implementation (installation tokens scoped to the repo and permissions of each call), and `FakeGitHub` in `@jules/forge/testing`, which delivers real signed webhooks over HTTP.
 - Tests that touch the database use `startTestDatabase()` from `@jules/db/testing`, never a mock. `audit_log` is append-only, so tests filter it by target instead of truncating it.
-- Still to come, as planned in ARCHITECTURE.md §21: `apps/api`, `apps/web`, `apps/desktop`, and the `workflow` and `risk` packages, which are **pure** and need 100% coverage like `policy`. Also planned: `evals/`. In Jules's own repo, `packages/policy`, `packages/workflow`, `packages/risk` and `prompts/` are high-risk paths (WORKFLOW.md §11), and any change to a prompt, model or rule must pass the eval suite first.
+- The audit PII guard rejects keys like `name`, `login`, `email` in audit `data`: use internal IDs and neutral keys (`command`, `role`).
+- Still to come, as planned in ARCHITECTURE.md §21: `apps/api`, `apps/web`, `apps/desktop`, `packages/gates`, `packages/ui`, and `evals/`. In Jules's own repo, `packages/policy`, `packages/workflow`, `packages/risk` and `prompts/` are high-risk paths (WORKFLOW.md §11), and any change to a prompt, model or rule must pass the eval suite first.

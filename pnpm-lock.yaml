@@ -81,6 +81,9 @@ importers:
       '@jules/audit':
         specifier: workspace:*
         version: link:../../packages/audit
+      '@jules/commands':
+        specifier: workspace:*
+        version: link:../../packages/commands
       '@jules/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -93,12 +96,18 @@ importers:
       '@jules/policy':
         specifier: workspace:*
         version: link:../../packages/policy
+      '@jules/risk':
+        specifier: workspace:*
+        version: link:../../packages/risk
       '@jules/sandbox':
         specifier: workspace:*
         version: link:../../packages/sandbox
       '@jules/secrets':
         specifier: workspace:*
         version: link:../../packages/secrets
+      '@jules/workflow':
+        specifier: workspace:*
+        version: link:../../packages/workflow
       fastify:
         specifier: 5.12.7
         version: 5.12.7

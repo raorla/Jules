@@ -35,10 +35,17 @@ function sse(res: ServerResponse, events: Record<string, unknown>[]) {
   res.end();
 }
 
-export async function startFakeModel(
-  script: Step[],
-  mainTool = "mcp__jules__submit_build",
-): Promise<FakeModel> {
+/** Un scénario par rôle, reconnu à l'outil de soumission présent dans la requête. */
+export type Scripts = Partial<Record<"triage" | "spec" | "design" | "build", Step[]>>;
+const ROLE_TOOLS = {
+  triage: "mcp__jules__submit_triage",
+  spec: "mcp__jules__submit_spec",
+  design: "mcp__jules__submit_design",
+  build: "mcp__jules__submit_build",
+} as const;
+
+export async function startFakeModel(input: Step[] | Scripts): Promise<FakeModel> {
+  const scripts: Scripts = Array.isArray(input) ? { build: input } : input;
   const requests: FakeModel["requests"] = [];
   let overloaded = 0;
   let usage = { input_tokens: 100, output_tokens: 20 };
@@ -68,9 +75,14 @@ export async function startFakeModel(
       return;
     }
 
-    const isMain = (body.tools ?? []).some((t) => t.name === mainTool);
+    const tools = new Set((body.tools ?? []).map((t) => t.name));
+    const role = (Object.keys(ROLE_TOOLS) as (keyof typeof ROLE_TOOLS)[]).find((r) =>
+      tools.has(ROLE_TOOLS[r]),
+    );
     const assistantTurns = (body.messages ?? []).filter((m) => m.role === "assistant").length;
-    const step: Step = isMain ? (script[assistantTurns] ?? { text: "Terminé." }) : { text: "ok" };
+    const step: Step = role
+      ? (scripts[role]?.[assistantTurns] ?? { text: "Terminé." })
+      : { text: "ok" };
     const messageId = `msg_${++id}`;
     const block =
       "tool" in step

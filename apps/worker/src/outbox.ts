@@ -18,7 +18,7 @@ import {
 import { pushBranch, remoteBranchSha, type RepoRef } from "@jules/forge";
 import { z } from "zod";
 import type { WorkerDeps } from "./deps.js";
-import { renderStatusComment, statusMarker } from "./messages.js";
+import { renderStatusComment, statusMarker, type StatusView } from "./messages.js";
 
 // Effets (ARCHITECTURE.md §17) : une transition écrit l'effet dans `outbox`, dans sa transaction ;
 // le worker l'exécute ensuite. Chaque exécuteur est idempotent : un effet rejoué après un crash
@@ -36,6 +36,14 @@ const effectPayloads = {
     sha: z.string(),
   }),
   "github.pull_request": z.object({ taskId: z.uuid() }),
+  "github.reply": z.object({
+    installationId: z.number(),
+    owner: z.string(),
+    repo: z.string(),
+    issueNumber: z.number(),
+    eventId: z.uuid(),
+    body: z.string().max(4000),
+  }),
 } as const;
 
 export type EffectKind = keyof typeof effectPayloads;
@@ -85,9 +93,9 @@ async function claimNext(db: DbOrTx): Promise<OutboxRow | undefined> {
           where o.serial_key is not null
             and earlier.serial_key = o.serial_key
             and earlier.status in ('pending', 'running')
-            and (earlier.created_at, earlier.id) < (o.created_at, o.id)
+            and earlier.seq < o.seq
         )
-      order by o.run_after, o.created_at
+      order by o.run_after, o.seq
       limit 1
       for update skip locked
     )
@@ -142,6 +150,10 @@ const executors: Record<EffectKind, Executor> = {
     const plan = (await latestArtifact(db, taskId, "plan")) as { steps: string[] } | undefined;
     const questions = (await latestArtifact(db, taskId, "questions")) as
       { questions: string[] } | undefined;
+    const triage = (await latestArtifact(db, taskId, "triage")) as
+      { splitProposal?: { title: string; summary: string }[] } | undefined;
+    const spec = (await latestArtifact(db, taskId, "spec")) as StatusView["spec"];
+    const design = (await latestArtifact(db, taskId, "design")) as StatusView["design"];
     const updates = await db
       .select({ input: toolCalls.input })
       .from(toolCalls)
@@ -160,11 +172,14 @@ const executors: Record<EffectKind, Executor> = {
         task,
         ...(plan ? { plan: plan.steps } : {}),
         ...(questions ? { questions: questions.questions } : {}),
+        ...(triage?.splitProposal ? { split: triage.splitProposal } : {}),
+        ...(spec ? { spec } : {}),
+        ...(design ? { design } : {}),
         updates: updates
           .map((u) => (u.input as { message?: string }).message ?? "")
           .filter(Boolean),
       },
-      settings.language,
+      task.language ?? settings.language,
     );
 
     if (
@@ -199,6 +214,19 @@ const executors: Record<EffectKind, Executor> = {
     }
     await pushBranch(payload.pristineDir, url, payload.branch, token);
     return { branch: payload.branch, sha: payload.sha, operation: "pushed" };
+  },
+
+  "github.reply": async ({ github }, row) => {
+    const p = effectPayloads["github.reply"].parse(row.payload);
+    const ref = { installationId: p.installationId, owner: p.owner, repo: p.repo };
+    const marker = `<!-- jules:reply event=${p.eventId} -->`;
+    // Retrouvée par son marqueur après un crash, comme le commentaire de statut.
+    const existing = await github.findIssueComment(ref, p.issueNumber, marker);
+    if (existing) {
+      return { commentId: existing.id, operation: "found" };
+    }
+    const created = await github.createIssueComment(ref, p.issueNumber, `${marker}\n${p.body}`);
+    return { commentId: created.id, operation: "created" };
   },
 
   "github.pull_request": async ({ db, github }, row) => {

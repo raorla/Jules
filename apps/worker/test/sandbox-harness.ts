@@ -62,7 +62,9 @@ export function sandboxSetup(
   github.setRole("alice", "write");
   const remote = bareRemote();
   github.remotes.set("acme/sandbox", remote);
+  const instance = `test-${crypto.randomUUID().slice(0, 8)}`;
   const driver = new RecordingDriver({
+    instance,
     runtime: process.env.JULES_SANDBOX_RUNTIME ?? "runc",
     egressImage: TEST_IMAGES.egress,
   });
@@ -94,5 +96,5 @@ export function sandboxSetup(
       ...overrides,
     },
   });
-  return { github, remote, driver, runsDir, orchestrator, log };
+  return { github, remote, driver, runsDir, orchestrator, log, instance };
 }

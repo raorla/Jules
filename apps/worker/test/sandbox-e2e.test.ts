@@ -62,7 +62,8 @@ describe("M1 : issue → développeur → push → PR brouillon", () => {
     const [done] = await t.db.select().from(tasks).where(eq(tasks.id, task.id));
     expect(done?.lastError ?? null).toBeNull();
     expect(done).toMatchObject({
-      state: "awaiting_human_review",
+      // La PR est ouverte au premier push ; les gates de vérification (M3) prennent la suite.
+      state: "verifying",
       branch: "jules/12-ajouter-healthz",
     });
     const log = execFileSync("git", [
@@ -93,7 +94,8 @@ describe("M1 : issue → développeur → push → PR brouillon", () => {
     const status =
       s.github.commentsOn({ installationId: 4242, owner: "acme", repo: "sandbox" }, 12).at(-1)
         ?.body ?? "";
-    expect(status).toContain("PR prête pour ta review");
+    expect(status).toContain("en vérification");
+    expect(status).toContain("Pull request");
     expect(status).toContain("- [x] Écrire le test");
   });
 });
@@ -244,7 +246,7 @@ describe("M1 : sécurité du sandbox", () => {
     const runDir = readdirSync(s.runsDir).map((d) => join(s.runsDir, d))[0]!;
     expect(existsSync(join(runDir, "workspace", ".hooks", "post-commit"))).toBe(true);
     expect(existsSync(join(runDir, "PWNED"))).toBe(false);
-    expect((await taskState(task.id))?.state).toBe("awaiting_human_review");
+    expect((await taskState(task.id))?.state).toBe("verifying");
   });
 
   it("refuse et journalise les outils pièges", async () => {
@@ -292,7 +294,10 @@ describe("M1 : fiabilité", () => {
     const { task } = await seedTask(t.db);
     await s.orchestrator.drainTasks();
     const docker = new Docker();
-    const sandboxes = () => docker.listContainers({ filters: { label: ["jules.sandbox=1"] } });
+    const sandboxes = () =>
+      docker.listContainers({
+        filters: { label: ["jules.sandbox=1", `jules.instance=${s.instance}`] },
+      });
     for (let i = 0; i < 200 && (await sandboxes()).length < 2; i++) {
       await new Promise((r) => setTimeout(r, 100));
     }
@@ -339,7 +344,7 @@ describe("M1 : fiabilité", () => {
     await new Promise((r) => setTimeout(r, 400));
     expect(await s.orchestrator.drainTasks()).toBe(1);
     await s.orchestrator.idle();
-    expect((await taskState(task.id))?.state).toBe("awaiting_human_review");
+    expect((await taskState(task.id))?.state).toBe("verifying");
   });
 
   it("après un crash du worker, ni commentaire en double, ni deuxième PR, ni effet perdu", async () => {
@@ -353,7 +358,8 @@ describe("M1 : fiabilité", () => {
       .where(eq(tasks.id, task.id));
 
     expect(await s.orchestrator.recover()).toBeGreaterThanOrEqual(1);
-    expect((await taskState(task.id))?.state).toBe("received");
+    // Le bail est libéré : la tâche reprend dans sa phase, depuis le dernier artefact validé.
+    expect(await taskState(task.id)).toMatchObject({ state: "building", leaseUntil: null });
     await s.orchestrator.drainTasks();
     await s.orchestrator.idle();
     const deps = testDeps(t.db, s.github);

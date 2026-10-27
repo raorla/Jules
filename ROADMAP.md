@@ -137,6 +137,8 @@ Sur un repo de test, puis sur 2 ou 3 de tes vrais repos : une issue `@jules` dev
 
 ### M2 — Machine à états, phases 1 à 3, gates humaines (M)
 
+> Statut (27/10/2026) : code livré. Les quatre critères de la DoD sont des tests automatisés qui passent avec le vrai sandbox. Après la build, la tâche s'arrête en `verifying`, avec la PR ouverte en brouillon ; les gates de M3 prennent la suite.
+
 **Livrables**
 - `packages/workflow` : états, transitions, gardes et transitions optimistes, avec des tests exhaustifs des transitions.
 - Les rôles triager, specifier et architect, avec les schémas d'artefacts (`packages/artifacts`).

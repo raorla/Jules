@@ -46,7 +46,16 @@ export async function eventually<T>(
 }
 
 /** Une tâche prête à exécuter, sur un repo et une installation de test. */
-export async function seedTask(db: Db, overrides: { issueNumber?: number } = {}) {
+export async function seedTask(
+  db: Db,
+  overrides: {
+    issueNumber?: number;
+    state?: "received" | "building";
+    autonomy?: "L0" | "L1" | "L2";
+    title?: string;
+    request?: string;
+  } = {},
+) {
   const { installations, repos, tasks } = await import("@jules/db");
   const [installation] = await db
     .insert(installations)
@@ -84,8 +93,20 @@ export async function seedTask(db: Db, overrides: { issueNumber?: number } = {})
       repoId: repo!.id,
       agent: "developer",
       issueNumber: overrides.issueNumber ?? Math.floor(Math.random() * 1e6),
-      title: "Ajouter /healthz",
-      request: "@jules ajoute un endpoint /healthz",
+      title: overrides.title ?? "Ajouter /healthz",
+      request: overrides.request ?? "@jules ajoute un endpoint /healthz",
+      // Par défaut, une tâche déjà en développement (raccourci des tests de M1) ; `received` pour tout le pipeline.
+      state: overrides.state ?? "building",
+      ...(overrides.state === "received"
+        ? {}
+        : {
+            autonomy: "L2" as const,
+            type: "bug",
+            size: "S",
+            risk: "low" as const,
+            language: "fr" as const,
+          }),
+      ...(overrides.autonomy ? { autonomy: overrides.autonomy } : {}),
     })
     .returning();
   return { installation: installation!, repo: repo!, task: task! };

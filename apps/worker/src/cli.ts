@@ -165,11 +165,16 @@ async function main(argv: string[]): Promise<number> {
         return 0;
       }
       const started = Date.now();
-      const report = await stopAll(db, new SandboxDriver({ runtime: "runsc", egressImage: "-" }), {
-        orgId: DEFAULT_ORG_ID,
-        reason: values.reason ?? "jules stop --all",
-        actorId: "cli",
-      });
+      const instance = process.env.JULES_INSTANCE ?? "default";
+      const report = await stopAll(
+        db,
+        new SandboxDriver({ runtime: "runsc", egressImage: "-", instance }),
+        {
+          orgId: DEFAULT_ORG_ID,
+          reason: values.reason ?? "jules stop --all",
+          actorId: "cli",
+        },
+      );
       process.stdout.write(
         `arrêt d'urgence actif : ${report.killedContainers} conteneur(s) tué(s), ${report.revokedTokens} jeton(s) révoqué(s) en ${Date.now() - started} ms\n` +
           "Rien ne redémarre tant que l'arrêt n'est pas levé (jules stop --lift).\n",

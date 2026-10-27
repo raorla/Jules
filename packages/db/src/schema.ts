@@ -134,6 +134,14 @@ export const tasks = pgTable(
     risk: text("risk", { enum: ["low", "medium", "high"] }),
     iterations: integer("iterations").notNull().default(0),
     reviewRounds: integer("review_rounds").notNull().default(0),
+    questionRounds: integer("question_rounds").notNull().default(0),
+    adrPlanned: boolean("adr_planned"),
+    /** Phase à reprendre après une attente, un blocage ou un échec (packages/workflow). */
+    resumeState: text("resume_state", { enum: TASK_STATES }),
+    paused: boolean("paused").notNull().default(false),
+    /** Autonomie effective, fixée au triage : celle de l'admin, éventuellement baissée par la config. */
+    autonomy: text("autonomy", { enum: ["L0", "L1", "L2"] }),
+    language: text("language", { enum: ["fr", "en"] }),
     costUsd: numeric("cost_usd", { precision: 12, scale: 4 }).notNull().default("0"),
     branch: text("branch"),
     baseSha: text("base_sha"),
@@ -166,6 +174,8 @@ export const outbox = pgTable(
   "outbox",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    /** Ordre d'écriture : plusieurs effets d'une même transaction ont le même `created_at`. */
+    seq: bigserial("seq", { mode: "number" }).notNull(),
     orgId: orgId(),
     kind: text("kind").notNull(),
     idempotencyKey: text("idempotency_key").notNull().unique(),
@@ -185,7 +195,7 @@ export const outbox = pgTable(
   },
   (t) => [
     index("outbox_status_run_after_idx").on(t.status, t.runAfter),
-    index("outbox_serial_key_idx").on(t.serialKey, t.createdAt),
+    index("outbox_serial_key_idx").on(t.serialKey, t.seq),
   ],
 );
 
@@ -344,4 +354,47 @@ export const stops = pgTable(
       .on(t.orgId, t.scope)
       .where(sql`${t.liftedAt} is null`),
   ],
+);
+
+/** Commandes humaines (WORKFLOW.md §7), d'où qu'elles viennent : interface, auteur, décision. */
+export const commands = pgTable(
+  "commands",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    taskId: uuid("task_id").references(() => tasks.id),
+    source: text("source", { enum: ["github", "web", "desktop", "cli"] }).notNull(),
+    sourceEventId: uuid("source_event_id")
+      .unique()
+      .references(() => events.id),
+    authorId: uuid("author_id").references(() => users.id),
+    name: text("name").notNull(),
+    args: jsonb("args").notNull(),
+    decision: text("decision", { enum: ["applied", "denied", "rejected"] }).notNull(),
+    reason: text("reason").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("commands_task_idx").on(t.taskId, t.createdAt)],
+);
+
+/** Décisions humaines aux gates (H1, H2, H3) et sur les plans. */
+export const approvals = pgTable(
+  "approvals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    gate: text("gate").notNull(),
+    decision: text("decision", { enum: ["approve", "revise", "reject"] }).notNull(),
+    approverId: uuid("approver_id").references(() => users.id),
+    commandId: uuid("command_id").references(() => commands.id),
+    /** Version de la tâche approuvée : une approbation ne vaut que pour ce qui a été montré. */
+    taskVersion: integer("task_version").notNull(),
+    riskApproved: text("risk_approved", { enum: ["low", "medium", "high"] }),
+    comment: text("comment"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("approvals_task_idx").on(t.taskId, t.createdAt)],
 );

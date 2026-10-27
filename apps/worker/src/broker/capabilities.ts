@@ -1,6 +1,14 @@
 import { appendAudit } from "@jules/audit";
-import { capabilityInputs, isCapabilityName, type CapabilityName } from "@jules/artifacts";
-import { and, artifacts, desc, eq, toolCalls, type Tx } from "@jules/db";
+import {
+  capabilityInputs,
+  checkDesign,
+  checkSpec,
+  isCapabilityName,
+  type CapabilityName,
+  type Design,
+  type Spec,
+} from "@jules/artifacts";
+import { and, artifacts, desc, eq, tasks, toolCalls, type Tx } from "@jules/db";
 import { decide, type Decision, type Role } from "@jules/policy";
 import { enqueueEffect } from "../outbox.js";
 import { Masker, truncate } from "./masking.js";
@@ -26,6 +34,42 @@ const LIMITS: Partial<Record<CapabilityName, Limit>> = {
   ask_human: { perRun: 1 },
   run_checks: { perRun: 5 },
   submit_build: { perRun: 1 },
+  submit_triage: { perRun: 1 },
+  submit_spec: { perRun: 1 },
+  submit_design: { perRun: 1 },
+};
+
+async function latest<T>(tx: Tx, taskId: string, kind: string): Promise<T | undefined> {
+  const [row] = await tx
+    .select({ content: artifacts.content })
+    .from(artifacts)
+    .where(and(eq(artifacts.taskId, taskId), eq(artifacts.kind, kind)))
+    .orderBy(desc(artifacts.version))
+    .limit(1);
+  return row?.content as T | undefined;
+}
+
+/** Gates automatiques G2 et G3 (WORKFLOW.md §5) : vérifiées avant d'accepter l'artefact. */
+const VALIDATORS: Partial<
+  Record<
+    CapabilityName,
+    (tx: Tx, ctx: CallContext, input: never) => Promise<{ gate: string; problems: string[] }>
+  >
+> = {
+  submit_spec: async (tx, ctx, input: Spec) => {
+    const [task] = await tx
+      .select({ type: tasks.type })
+      .from(tasks)
+      .where(eq(tasks.id, ctx.taskId));
+    return {
+      gate: "G2",
+      problems: checkSpec(input, task?.type as Parameters<typeof checkSpec>[1]),
+    };
+  },
+  submit_design: async (tx, ctx, input: Design) => ({
+    gate: "G3",
+    problems: checkDesign(input, await latest<Spec>(tx, ctx.taskId, "spec")),
+  }),
 };
 
 const refused = (decision: Decision, status = 403): CallOutcome => ({
@@ -56,7 +100,32 @@ async function refreshStatus(tx: Tx, ctx: CallContext, reason: string): Promise<
 
 type Handler = (tx: Tx, ctx: CallContext, input: never, callId: string) => Promise<string>;
 
+async function storeArtifact(
+  tx: Tx,
+  ctx: CallContext,
+  kind: string,
+  content: object,
+): Promise<number> {
+  const version = await nextVersion(tx, ctx.taskId, kind);
+  await tx
+    .insert(artifacts)
+    .values({ orgId: ctx.orgId, taskId: ctx.taskId, runId: ctx.runId, kind, version, content });
+  return version;
+}
+
 const handlers: Partial<Record<CapabilityName, Handler>> = {
+  submit_triage: async (tx, ctx, input: object) => {
+    const version = await storeArtifact(tx, ctx, "triage", input);
+    return `ok: triage v${version} enregistré. Termine maintenant l'exécution.`;
+  },
+  submit_spec: async (tx, ctx, input: object) => {
+    const version = await storeArtifact(tx, ctx, "spec", input);
+    return `ok: spec v${version} enregistrée (gate G2 passée). Termine maintenant l'exécution.`;
+  },
+  submit_design: async (tx, ctx, input: object) => {
+    const version = await storeArtifact(tx, ctx, "design", input);
+    return `ok: conception v${version} enregistrée (gate G3 passée). Termine maintenant l'exécution.`;
+  },
   post_update: async (tx, ctx, _input: { message: string }, callId) => {
     await refreshStatus(tx, ctx, `update:${callId}`);
     return "ok: mise à jour ajoutée au commentaire de statut";
@@ -208,6 +277,20 @@ export async function handleCapability(
         },
         429,
       );
+      await record(outcome);
+      return outcome;
+    }
+  }
+
+  const validator = VALIDATORS[name];
+  if (validator) {
+    const { gate, problems } = await validator(tx, ctx, parsed.data as never);
+    if (problems.length > 0) {
+      const outcome: CallOutcome = {
+        status: 400,
+        decision: { effect: "deny", ruleId: `gate.${gate}`, reason: `gate ${gate} non satisfaite` },
+        text: `Gate ${gate} non satisfaite, corrige et soumets à nouveau : ${problems.join(" ; ")}`,
+      };
       await record(outcome);
       return outcome;
     }

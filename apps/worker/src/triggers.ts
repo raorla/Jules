@@ -54,7 +54,7 @@ const base = z.object({
   sender: account,
   issue,
 });
-const issueCommentPayload = base.extend({
+export const issueCommentPayload = base.extend({
   comment: z.object({ body: z.string(), user: account }),
 });
 const issuesPayload = base.extend({ label: z.object({ name: z.string() }).optional() });
