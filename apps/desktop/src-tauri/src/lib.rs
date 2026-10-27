@@ -306,9 +306,11 @@ fn local_login_secret() -> Result<LocalLogin, String> {
     Ok(LocalLogin { secret, login })
 }
 
-/// Chemin d'un dossier choisi, tel que le worker le voit (même chemin, sauf sous Windows).
+/// Chemin d'un dossier choisi, tel que le worker le voit (même chemin, sauf sous Windows), s'il s'agit
+/// bien de la racine d'un dépôt git qui a au moins un commit.
 #[tauri::command]
 fn local_container_path(path: String) -> Result<String, String> {
+    local::check_git_folder(Path::new(&path))?;
     local::container_path(&path)
 }
 

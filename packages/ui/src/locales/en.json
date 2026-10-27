@@ -450,7 +450,8 @@
     "access_current": "Currently:",
     "access_replace": "Replace",
     "access_saving": "Restarting the worker…",
-    "access_replaced": "Access replaced, the worker has it."
+    "access_replaced": "Access replaced, the worker has it.",
+    "repos_help": "A git folder with at least one commit: Jules works on branches and never touches your files in progress."
   },
   "stepup_page": {
     "subtitle": "confirm an action.",

@@ -450,7 +450,8 @@
     "access_current": "Actuellement :",
     "access_replace": "Remplacer",
     "access_saving": "Relance du worker…",
-    "access_replaced": "Accès remplacé, le worker l'a reçu."
+    "access_replaced": "Accès remplacé, le worker l'a reçu.",
+    "repos_help": "Un dossier git, avec au moins un commit : Jules travaille sur des branches et ne touche jamais à tes fichiers en cours."
   },
   "stepup_page": {
     "subtitle": "confirme une action.",

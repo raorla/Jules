@@ -79,7 +79,17 @@ export async function git(args: readonly string[], options: GitOptions = {}): Pr
 
 /** Clone nu du worker : la seule copie sur laquelle git tourne sur l'hôte. */
 export async function clonePristine(remoteUrl: string, dir: string, token?: string): Promise<void> {
-  await git(["clone", "--bare", "--quiet", remoteUrl, dir], { ...(token ? { token } : {}) });
+  try {
+    await git(["clone", "--bare", "--quiet", remoteUrl, dir], { ...(token ? { token } : {}) });
+  } catch (error) {
+    // Mode local : pour un dossier ordinaire, git dit « does not exist », ce qui n'aide personne.
+    if (isLocalRemote(remoteUrl) && error instanceof GitError) {
+      throw new GitError(
+        `le dossier ${remoteUrl} n'est pas un dépôt git utilisable : lance git init et fais un premier commit dedans, ou choisis un autre dossier (${error.message})`,
+      );
+    }
+    throw error;
+  }
 }
 
 export async function revParse(repoDir: string, ref: string): Promise<string> {

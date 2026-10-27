@@ -203,6 +203,7 @@ export function LocalReposCard({ me }: { me: Me }) {
           </div>
         ))}
         {repos.data?.length === 0 && <p className="muted">{t("local.no_repos")}</p>}
+        <p className="ink-2">{t("local.repos_help")}</p>
         {me.role === "admin" && (
           <div>
             <button className="pill" disabled={add.isPending} onClick={() => add.mutate()}>

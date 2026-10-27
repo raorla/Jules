@@ -194,6 +194,32 @@ pub fn container_path(path: &str) -> Result<String, String> {
     daemon(Path::new(path))
 }
 
+/// Un dossier proposé à Jules doit être la racine d'un dépôt git qui a au moins un commit : le worker
+/// le clone. Vérifié au choix du dossier, car l'api ne voit pas les fichiers de la machine ; sinon, la
+/// tâche échouerait plus tard avec un message de git peu parlant.
+pub fn check_git_folder(path: &Path) -> Result<(), String> {
+    let name = |p: &Path| p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned());
+    let git = |args: &[&str]| Command::new("git").arg("-C").arg(path).args(args).output();
+    let top = match git(&["rev-parse", "--show-toplevel"]) {
+        Ok(out) if out.status.success() => PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()),
+        Ok(_) => {
+            return Err(format!(
+                "« {} » n'est pas un dépôt git. Pour que Jules y travaille, lance git init puis un premier commit dans ce dossier, ou choisis-en un autre.",
+                name(path)
+            ))
+        }
+        // git absent de la machine : le worker, lui, l'a, et dira ce qui ne va pas.
+        Err(_) => return Ok(()),
+    };
+    if top.canonicalize().ok() != path.canonicalize().ok() {
+        return Err(format!("« {} » est dans le dépôt git « {} » : choisis la racine du dépôt.", name(path), name(&top)));
+    }
+    match git(&["rev-parse", "--verify", "--quiet", "HEAD"]) {
+        Ok(out) if out.status.success() => Ok(()),
+        _ => Err(format!("« {} » n'a encore aucun commit : fais un premier commit, puis ajoute-le.", name(path))),
+    }
+}
+
 type Server = JoinHandle<Result<(), HandoffError>>;
 
 /// Point de remise : TCP pour un démon dans une VM, socket Unix sinon.
@@ -403,6 +429,37 @@ mod tests {
         assert_eq!(vault.get(SUBSCRIPTION_ENTRY), Ok(None));
         assert!(set_model_access(&vault, AccessKind::Subscription, "court").is_err());
         assert_eq!(model_access(&vault), Ok(Some(ModelAccess::ApiKey(key))));
+    }
+
+    #[test]
+    fn only_the_root_of_a_git_repo_with_a_commit_is_accepted() {
+        let dir = std::env::temp_dir().join(format!("jules-dossiers-{}", std::process::id()));
+        let run = |cwd: &Path, args: &[&str]| {
+            let ok = Command::new("git")
+                .arg("-C")
+                .arg(cwd)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        let plain = dir.join("brochure");
+        std::fs::create_dir_all(&plain).unwrap();
+        std::fs::write(plain.join("brochure.pdf"), "pas du code").unwrap();
+        assert!(check_git_folder(&plain).unwrap_err().contains("« brochure » n'est pas un dépôt git"));
+
+        let repo = dir.join("projet");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        run(&repo, &["init", "-q", "-b", "main"]);
+        assert!(check_git_folder(&repo).unwrap_err().contains("aucun commit"));
+        std::fs::write(repo.join("src").join("a.js"), "export {};\n").unwrap();
+        run(&repo, &["add", "-A"]);
+        run(&repo, &["commit", "-q", "-m", "premier"]);
+        assert_eq!(check_git_folder(&repo), Ok(()));
+        assert!(check_git_folder(&repo.join("src")).unwrap_err().contains("dans le dépôt git « projet »"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  GitError,
   changedPaths,
   clonePristine,
   createWorkspace,
@@ -144,5 +145,21 @@ describe("git du worker", () => {
   it("ne laisse jamais le jeton dans un message d'erreur", async () => {
     const token = "ghs_secretjetondetest00000000000000000000";
     await expect(git(["ls-remote", `/inexistant/${token}`], { token })).rejects.not.toThrow(token);
+  });
+});
+
+describe("dossier local qui n'est pas un dépôt git", () => {
+  it("le clone dit quoi faire, au lieu de « does not exist »", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "jules-pas-git-"));
+    writeFileSync(join(folder, "brochure.pdf"), "pas du code");
+    const error = await clonePristine(
+      folder,
+      join(mkdtempSync(join(tmpdir(), "jules-p-")), "p.git"),
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(GitError);
+    expect((error as Error).message).toContain(
+      `le dossier ${folder} n'est pas un dépôt git utilisable`,
+    );
+    expect((error as Error).message).toContain("git init");
   });
 });
