@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Logo de Jules : un J dont le haut est un nœud, l'orchestrateur ; trois points, ses agents. -->
+  <rect width="1024" height="1024" rx="230" fill="#1c1a17"/>
+  <path d="M600 330 V600 a150 150 0 0 1 -300 0" fill="none" stroke="#e8e6e3" stroke-width="96" stroke-linecap="round"/>
+  <circle cx="600" cy="250" r="66" fill="#e8e6e3"/>
+  <circle cx="735" cy="420" r="34" fill="#9c948b"/>
+  <circle cx="735" cy="560" r="34" fill="#9c948b"/>
+  <circle cx="735" cy="700" r="34" fill="#3ccb7f"/>
+</svg>
