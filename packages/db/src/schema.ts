@@ -1,3 +1,4 @@
+import { TASK_STATES } from "@jules/workflow";
 import { sql } from "drizzle-orm";
 import {
   bigint,
@@ -105,26 +106,8 @@ export const events = pgTable(
   (t) => [index("events_status_received_idx").on(t.status, t.receivedAt)],
 );
 
-export const TASK_STATES = [
-  "received",
-  "triaging",
-  "awaiting_info",
-  "specifying",
-  "awaiting_spec_approval",
-  "designing",
-  "awaiting_design_approval",
-  "building",
-  "verifying",
-  "reviewing",
-  "awaiting_human_review",
-  "learning",
-  "done",
-  "waiting_provider",
-  "blocked",
-  "cancelled",
-  "failed",
-] as const;
-export type TaskState = (typeof TASK_STATES)[number];
+// Les états viennent de la machine à états (packages/workflow) : une seule source de vérité.
+export { TASK_STATES, type TaskState } from "@jules/workflow";
 
 export const tasks = pgTable(
   "tasks",
