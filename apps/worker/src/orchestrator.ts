@@ -30,6 +30,7 @@ import {
   installations,
   isNull,
   lt,
+  lessons,
   repos,
   runs,
   sql,
@@ -60,6 +61,8 @@ import { issueRunToken } from "./broker/tokens.js";
 import { isStopped } from "./controls.js";
 import { enqueueEffect } from "./outbox.js";
 import { applyTransition, type TaskRow } from "./transitions.js";
+import { TRANSCRIPTS_DIR } from "./retention.js";
+import { withSpan } from "./tracing.js";
 import { verify } from "./verification.js";
 
 // Orchestrateur (ARCHITECTURE.md §4.3) : fait avancer chaque tâche dans la machine à états
@@ -76,12 +79,23 @@ export type RoleSettings = {
 };
 
 export type AgentRole =
-  "triager" | "specifier" | "architect" | "developer" | "reviewer" | "security_reviewer";
+  | "triager"
+  | "specifier"
+  | "architect"
+  | "developer"
+  | "reviewer"
+  | "security_reviewer"
+  | "learner";
 
 /** Ce qui distingue les rôles (ARCHITECTURE.md §6.1). */
 const ROLE_SPECS: Record<
   AgentRole,
-  { tools: string[]; workspace: "ro" | "rw"; submits: string; effort: RunContext["effort"] }
+  {
+    tools: string[];
+    workspace: "ro" | "rw" | "none";
+    submits: string;
+    effort: RunContext["effort"];
+  }
 > = {
   triager: { tools: ["Read", "Glob", "Grep"], workspace: "ro", submits: "triage", effort: "low" },
   specifier: { tools: ["Read", "Glob", "Grep"], workspace: "ro", submits: "spec", effort: "high" },
@@ -110,6 +124,8 @@ const ROLE_SPECS: Record<
     submits: "review",
     effort: "high",
   },
+  // Le learner n'a ni outil intégré ni workspace : il ne lit que ce que les humains ont dit et fait.
+  learner: { tools: [], workspace: "none", submits: "lessons", effort: "low" },
 };
 
 /** Modèle par défaut du reviewer : un autre que celui du développeur (ARCHITECTURE.md §6.1). */
@@ -306,6 +322,14 @@ export class Orchestrator {
 
   /** Fait avancer une tâche réservée d'une étape. */
   async advance(claimed: TaskRow): Promise<void> {
+    return withSpan(
+      "task.advance",
+      { "jules.task": claimed.id, "jules.state": claimed.state },
+      () => this.#advance(claimed),
+    );
+  }
+
+  async #advance(claimed: TaskRow): Promise<void> {
     let task = claimed;
     if (task.state === "received" || task.state === "waiting_provider") {
       // Le bail est gardé dans la même écriture : sinon une autre réservation reprendrait la tâche.
@@ -536,6 +560,12 @@ export class Orchestrator {
   }
 
   async #runRole(claimed: TaskRow, role: AgentRole): Promise<void> {
+    return withSpan("run", { "jules.task": claimed.id, "jules.role": role }, () =>
+      this.#runRoleInner(claimed, role),
+    );
+  }
+
+  async #runRoleInner(claimed: TaskRow, role: AgentRole): Promise<void> {
     const { db, github, driver, log, config } = this.#deps;
     let task = claimed;
     const spec = ROLE_SPECS[role];
@@ -661,6 +691,9 @@ export class Orchestrator {
           .replaceAll("{{common}}", common)
           .replaceAll("{{language}}", language === "fr" ? "français" : "English"),
         prompt: await this.#prompt(task, repo, conventions, {
+          ...(role === "learner" && task.baseSha && task.branch
+            ? { humanCommits: await humanCommits(pristine, task.baseSha, task.branch) }
+            : {}),
           ...(spec.submits === "review" && task.baseSha
             ? {
                 diff: await git(
@@ -717,11 +750,15 @@ export class Orchestrator {
           image: config.sandboxImage,
           env: { JULES_RUN_TOKEN: token },
           mounts: [
-            {
-              source: workspace,
-              target: SANDBOX_PATHS.workspace,
-              readOnly: spec.workspace === "ro",
-            },
+            ...(spec.workspace === "none"
+              ? []
+              : [
+                  {
+                    source: workspace,
+                    target: SANDBOX_PATHS.workspace,
+                    readOnly: spec.workspace === "ro",
+                  },
+                ]),
             { source: julesDir, target: SANDBOX_PATHS.dir, readOnly: false },
           ],
           network: {
@@ -740,6 +777,7 @@ export class Orchestrator {
       }
 
       const result = await readResult(julesDir);
+      await keepTranscript(julesDir, config.runsDir, run.id, this.#deps.masker);
       const [finished] = await db.select().from(runs).where(eq(runs.id, run.id));
       const stopReason = this.#stopReasons.get(run.id);
       this.#stopReasons.delete(run.id);
@@ -848,6 +886,39 @@ export class Orchestrator {
           type: "design_submitted",
           adrPlanned: (submitted.content as Design).adr !== undefined,
         });
+      } else if (role === "learner") {
+        // Avec ou sans leçon, le retour d'expérience termine la tâche ; les leçons sont publiées dans la PR.
+        const proposed = await db.select().from(lessons).where(eq(lessons.taskId, task.id));
+        const fresh = await this.#reload(task.id);
+        await this.#apply(
+          fresh,
+          { type: submitted ? "lessons_submitted" : "run_without_result" },
+          {},
+          async (tx) => {
+            if (proposed.length > 0 && fresh.prNumber) {
+              await enqueueEffect(tx, {
+                orgId: task.orgId,
+                kind: "github.reply",
+                idempotencyKey: `lessons:${run.id}`,
+                payload: {
+                  ...repo.ref,
+                  issueNumber: fresh.prNumber,
+                  eventId: run.id,
+                  body: [
+                    "### Leçons proposées par Jules",
+                    "",
+                    ...proposed.map(
+                      (l) =>
+                        `- \`${l.id.slice(0, 8)}\` ${l.text.replaceAll("@", "@\u200b")} _(source : ${l.source.replaceAll("@", "@\u200b")})_`,
+                    ),
+                    "",
+                    "Une personne avec le droit `maintain` les valide : `/jules lesson approve <id>` ou `/jules lesson reject <id>`. Seules les leçons validées servent aux tâches suivantes.",
+                  ].join("\n"),
+                },
+              });
+            }
+          },
+        );
       } else if (submitted && submitted.kind === "review") {
         await this.#review(task, submitted.version, submitted.content as Review);
       } else if (submitted && role === "developer") {
@@ -982,7 +1053,7 @@ export class Orchestrator {
     task: TaskRow,
     repo: RepoContext,
     conventions: string | undefined,
-    extra: { diff?: string } = {},
+    extra: { diff?: string; humanCommits?: string } = {},
   ): Promise<string> {
     const rows = await this.#deps.db
       .select()
@@ -1040,6 +1111,43 @@ export class Orchestrator {
         ...gates.results
           .filter((r) => r.status === "fail" || r.status === "warn")
           .map((r) => `- ${r.id} ${r.name} : ${r.status} — ${r.details}`),
+      );
+    }
+    // Leçons validées par un humain pour ce repo (ARCHITECTURE.md §15) : 30 au plus, les plus récentes.
+    const approved = await this.#deps.db
+      .select({ text: lessons.text })
+      .from(lessons)
+      .where(and(eq(lessons.repoId, task.repoId), eq(lessons.status, "approved")))
+      .orderBy(desc(lessons.decidedAt))
+      .limit(30);
+    if (approved.length > 0) {
+      sections.push(
+        "",
+        "# Leçons de ce repo (validées par un humain)",
+        "",
+        ...approved.map((l) => `- ${l.text}`),
+      );
+    }
+    if (extra.humanCommits !== undefined) {
+      const closed = latest("pr_closed") as { merged: boolean } | undefined;
+      const review = latest("review") as Review | undefined;
+      sections.push(
+        "",
+        "# Issue de la PR",
+        "",
+        closed
+          ? closed.merged
+            ? "La PR a été mergée."
+            : "La PR a été fermée sans être mergée."
+          : "La PR est terminée.",
+        `Rounds de review IA : ${task.reviewRounds} ; itérations de vérification : ${task.iterations}.`,
+        ...(review ? ["", `Dernière review IA : ${review.summary}`] : []),
+        "",
+        "# Commits ajoutés par des humains sur la branche",
+        "",
+        "<commits>",
+        extra.humanCommits || "(aucun)",
+        "</commits>",
       );
     }
     if (extra.diff !== undefined) {
@@ -1281,6 +1389,45 @@ const EXPORT_SCRIPT = [
   'GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true $G -c user.name=Jules -c user.email=jules@users.noreply.github.com -c commit.gpgsign=false rebase -q --exec "git -c core.hooksPath=/dev/null -c safe.directory=/workspace -c user.name=Jules -c user.email=jules@users.noreply.github.com -c commit.gpgsign=false commit -q --amend --no-edit --no-verify --trailer \\"Jules-Task: $JULES_TASK_ID\\"" "$JULES_BASE_SHA"',
   '$G bundle create -q /run/jules-export/work.bundle HEAD "^$JULES_BASE_SHA"',
 ].join("\n");
+
+/** Transcription de l'exécution, masquée, conservée 90 jours hors du dossier de l'exécution (§18). */
+async function keepTranscript(
+  julesDir: string,
+  runsDir: string,
+  runId: string,
+  masker: Masker,
+): Promise<void> {
+  try {
+    const text = await readFile(join(julesDir, "transcript.jsonl"), "utf8");
+    await mkdir(join(runsDir, TRANSCRIPTS_DIR), { recursive: true, mode: 0o700 });
+    await writeFile(join(runsDir, TRANSCRIPTS_DIR, `${runId}.jsonl`), masker.mask(text), {
+      mode: 0o600,
+    });
+  } catch {
+    // Pas de transcription (exécution arrêtée avant le premier message) : rien à garder.
+  }
+}
+
+/** Commits de la branche qui ne viennent pas de Jules : ce que les humains ont dû corriger. */
+async function humanCommits(pristine: string, baseSha: string, branch: string): Promise<string> {
+  try {
+    const log = await git(
+      [
+        "log",
+        "--no-color",
+        "--format=%h %an : %s",
+        "--stat=120",
+        `${baseSha}..refs/heads/${branch}`,
+        "--author=^(?!Jules$)",
+        "--perl-regexp",
+      ],
+      { cwd: pristine },
+    );
+    return log.slice(0, 20_000);
+  } catch {
+    return "";
+  }
+}
 
 async function readResult(dir: string): Promise<RunResult | undefined> {
   try {

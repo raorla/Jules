@@ -1,0 +1,9 @@
+{
+  "id": "readme-sum",
+  "fixture": "fixtures/node-basic",
+  "type": "docs",
+  "issue": {
+    "title": "Documenter sum",
+    "body": "@jules documente la fonction `sum` dans le README : signature, exemple d'usage, comportement."
+  }
+}

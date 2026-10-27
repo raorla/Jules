@@ -5,6 +5,7 @@ import type { WorkerDeps } from "./deps.js";
 import { drainEvents } from "./inbox.js";
 import { drainOutbox } from "./outbox.js";
 import type { Orchestrator } from "./orchestrator.js";
+import { purgeExpired } from "./retention.js";
 import { GITHUB_DELIVERY_RETENTION_MS, reconcileDeliveries } from "./reconcile.js";
 
 // Boucle du worker. LISTEN/NOTIFY réveille le traitement dès qu'un événement ou un effet arrive ;
@@ -14,6 +15,8 @@ export type WorkerOptions = {
   databaseUrl: string;
   /** Sans orchestrateur (M0), le worker traite les événements et les effets seulement. */
   orchestrator?: Orchestrator;
+  /** Dossier des exécutions : la purge de rétention y passe toutes les heures. */
+  runsDir?: string;
   pollMs?: number;
   reconcileEveryMs?: number;
   reconcileLookbackMs?: number;
@@ -31,7 +34,8 @@ type Loop = { running: boolean; again: boolean; run: () => Promise<number> };
 
 export class Worker {
   readonly #deps: WorkerDeps;
-  readonly #options: Required<Omit<WorkerOptions, "orchestrator">>;
+  readonly #options: Required<Omit<WorkerOptions, "orchestrator" | "runsDir">>;
+  readonly #runsDir: string | undefined;
   readonly #orchestrator: Orchestrator | undefined;
   readonly #loops: Record<LoopName, Loop>;
   readonly #timers: NodeJS.Timeout[] = [];
@@ -40,7 +44,8 @@ export class Worker {
 
   constructor(deps: WorkerDeps, options: WorkerOptions) {
     this.#deps = deps;
-    const { orchestrator, ...rest } = options;
+    const { orchestrator, runsDir, ...rest } = options;
+    this.#runsDir = runsDir;
     this.#options = {
       pollMs: 5_000,
       reconcileEveryMs: 10 * 60_000,
@@ -76,11 +81,30 @@ export class Worker {
         this.#kick("tasks");
       }, this.#options.pollMs),
       setInterval(() => void this.#recover(), 60_000),
+      setInterval(() => void this.#purge(), 3600_000),
       setInterval(
         () => void this.reconcile(this.#options.reconcileLookbackMs),
         this.#options.reconcileEveryMs,
       ),
     );
+  }
+
+  async #purge(): Promise<void> {
+    if (!this.#runsDir) {
+      return;
+    }
+    try {
+      const report = await purgeExpired(this.#deps.db, {
+        runsDir: this.#runsDir,
+        ...(this.#orchestrator ? { activeRuns: this.#orchestrator.activeRuns } : {}),
+      });
+      this.#deps.log.info(report, "purge de rétention");
+    } catch (error) {
+      this.#deps.log.warn(
+        { err: error instanceof Error ? error.message : String(error) },
+        "purge impossible",
+      );
+    }
   }
 
   async #recover(): Promise<void> {

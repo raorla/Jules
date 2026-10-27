@@ -1,0 +1,7 @@
+version: 1
+commands:
+  test: npm test
+coverage:
+  report: lcov.info
+gates:
+  diff_coverage_min: 80

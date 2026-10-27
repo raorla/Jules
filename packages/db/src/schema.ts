@@ -398,3 +398,25 @@ export const approvals = pgTable(
   },
   (t) => [index("approvals_task_idx").on(t.taskId, t.createdAt)],
 );
+
+/** Leçons par repo (ARCHITECTURE.md §15) : proposées par le learner, validées par un humain. */
+export const lessons = pgTable(
+  "lessons",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    repoId: uuid("repo_id")
+      .notNull()
+      .references(() => repos.id),
+    taskId: uuid("task_id").references(() => tasks.id),
+    text: text("text").notNull(),
+    source: text("source").notNull(),
+    status: text("status", { enum: ["proposed", "approved", "rejected", "retired"] })
+      .notNull()
+      .default("proposed"),
+    decidedBy: uuid("decided_by").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("lessons_repo_status_idx").on(t.repoId, t.status)],
+);

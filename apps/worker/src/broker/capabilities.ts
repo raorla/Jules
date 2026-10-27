@@ -8,7 +8,7 @@ import {
   type Design,
   type Spec,
 } from "@jules/artifacts";
-import { and, artifacts, desc, eq, tasks, toolCalls, type Tx } from "@jules/db";
+import { and, artifacts, desc, eq, lessons, tasks, toolCalls, type Tx } from "@jules/db";
 import { decide, type Decision, type Role } from "@jules/policy";
 import { enqueueEffect } from "../outbox.js";
 import { Masker, truncate } from "./masking.js";
@@ -38,6 +38,7 @@ const LIMITS: Partial<Record<CapabilityName, Limit>> = {
   submit_spec: { perRun: 1 },
   submit_design: { perRun: 1 },
   submit_review: { perRun: 1 },
+  propose_lessons: { perRun: 1 },
 };
 
 async function latest<T>(tx: Tx, taskId: string, kind: string): Promise<T | undefined> {
@@ -122,6 +123,25 @@ const handlers: Partial<Record<CapabilityName, Handler>> = {
   submit_spec: async (tx, ctx, input: object) => {
     const version = await storeArtifact(tx, ctx, "spec", input);
     return `ok: spec v${version} enregistrée (gate G2 passée). Termine maintenant l'exécution.`;
+  },
+  propose_lessons: async (tx, ctx, input: { lessons: { text: string; source: string }[] }) => {
+    await storeArtifact(tx, ctx, "lessons", input);
+    const [task] = await tx
+      .select({ repoId: tasks.repoId })
+      .from(tasks)
+      .where(eq(tasks.id, ctx.taskId));
+    if (task && input.lessons.length > 0) {
+      await tx.insert(lessons).values(
+        input.lessons.map((l) => ({
+          orgId: ctx.orgId,
+          repoId: task.repoId,
+          taskId: ctx.taskId,
+          text: l.text,
+          source: l.source,
+        })),
+      );
+    }
+    return `ok: ${input.lessons.length} leçon(s) proposée(s). Termine maintenant l'exécution.`;
   },
   submit_review: async (tx, ctx, input: object) => {
     const version = await storeArtifact(tx, ctx, "review", input);

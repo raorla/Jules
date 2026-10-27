@@ -6,6 +6,7 @@ import {
   artifacts,
   desc,
   eq,
+  lessons,
   events,
   notInArray,
   repos,
@@ -100,7 +101,9 @@ export async function prepareConversation(
   const peek = await deps.db.transaction((tx) =>
     activeTask(tx, p.repository.id, p.issue.number, onPullRequest),
   );
-  if (onPullRequest && (!command || !peek)) {
+  const isLesson =
+    command !== undefined && "command" in command && command.command.name === "lesson";
+  if (onPullRequest && (!command || (!peek && !isLesson))) {
     const reason = peek ? "pull_request_comment" : "no_task_for_pull_request";
     return () => Promise.resolve({ status: "ignored" as const, reason });
   }
@@ -219,6 +222,52 @@ export async function prepareConversation(
       return { status: "ignored", reason: "insufficient_permission" };
     }
 
+    if (cmd.name === "lesson") {
+      // Une leçon se valide après la fin de la tâche : elle est cherchée dans le repo, pas dans une tâche en cours.
+      const [lesson] = await tx
+        .select({ id: lessons.id, status: lessons.status })
+        .from(lessons)
+        .innerJoin(repos, eq(repos.id, lessons.repoId))
+        .where(
+          and(
+            eq(repos.githubRepoId, p.repository.id),
+            sql`${lessons.id}::text like ${`${cmd.lessonId}%`}`,
+          ),
+        )
+        .limit(1);
+      if (!lesson || lesson.status !== "proposed") {
+        await record(
+          cmd.name,
+          cmd,
+          "rejected",
+          lesson ? `leçon déjà ${lesson.status}` : "leçon introuvable",
+        );
+        await reply(
+          tx,
+          orgId,
+          ref,
+          p.issue.number,
+          event.id,
+          `Jules : leçon \`${cmd.lessonId}\` ${lesson ? `déjà ${lesson.status}` : "introuvable"}.`,
+        );
+        return { status: "ignored", reason: "lesson_not_pending" };
+      }
+      const status = cmd.decision === "approve" ? "approved" : "rejected";
+      await tx
+        .update(lessons)
+        .set({ status, decidedBy: userId, decidedAt: sql`now()` })
+        .where(eq(lessons.id, lesson.id));
+      await record(cmd.name, cmd, "applied", `leçon ${status}`);
+      await reply(
+        tx,
+        orgId,
+        ref,
+        p.issue.number,
+        event.id,
+        `Jules : leçon \`${cmd.lessonId}\` ${status === "approved" ? "validée : elle servira aux prochaines tâches" : "rejetée"}.`,
+      );
+      return { status: "processed" };
+    }
     if (cmd.name === "stop_all") {
       await record(cmd.name, cmd, "applied", `arrêt d'urgence : ${stopReport ?? "?"}`);
       await reply(
@@ -362,6 +411,8 @@ async function applyCommand(
     }
     case "stop_all":
       return { ok: true, reason: "arrêt d'urgence" };
+    case "lesson":
+      return { ok: false, reason: "les leçons sont traitées sans tâche en cours" };
   }
 }
 

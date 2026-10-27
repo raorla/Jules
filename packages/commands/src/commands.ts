@@ -14,7 +14,8 @@ export type Command =
   | { name: "resume" }
   | { name: "cancel" }
   | { name: "fix"; instructions: string }
-  | { name: "stop_all" };
+  | { name: "stop_all" }
+  | { name: "lesson"; decision: "approve" | "reject"; lessonId: string };
 
 export type ParsedCommand = { command: Command } | { error: string };
 
@@ -67,6 +68,16 @@ export function parseCommand(body: string): ParsedCommand | undefined {
       return { command: { name: "cancel" } };
     case "stop-all":
       return { command: { name: "stop_all" } };
+    case "lesson": {
+      const match = /^(approve|reject)\s+([0-9a-f]{8}(?:-[0-9a-f-]{27})?)$/i.exec(args);
+      if (!match) {
+        return { error: "`/jules lesson` attend `approve <id>` ou `reject <id>`" };
+      }
+      const decision = (match[1] as string).toLowerCase() as "approve" | "reject";
+      return {
+        command: { name: "lesson", decision, lessonId: (match[2] as string).toLowerCase() },
+      };
+    }
     case "budget": {
       const match = /^\+(\d+(?:\.\d+)?)\$?$/.exec(args);
       const amount = match ? Number(match[1]) : Number.NaN;
@@ -85,6 +96,7 @@ export function requiredRole(command: Command, risk: Risk | undefined): RepoRole
     case "stop_all":
       return "admin";
     case "budget":
+    case "lesson":
       return "maintain";
     case "approve":
       return risk === "high" ? "maintain" : "write";

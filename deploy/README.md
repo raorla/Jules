@@ -102,7 +102,7 @@ Seule la route `/webhooks/github` est exposée. Au démarrage, le worker redeman
 
 Dans une issue du repo, une personne avec le droit `maintain` commente `@jules setup` (avec ta mention). Jules ouvre une PR qui contient trois choses :
 - une `.jules/config.yml` adaptée à la stack détectée (Node, Python, Go ou Rust) ;
-- un `AGENTS.md`, s'il n'en existe ni ni `CLAUDE.md` ;
+- un `AGENTS.md`, s'il n'existe ni `AGENTS.md` ni `CLAUDE.md` ;
 - des CODEOWNERS pour les chemins sensibles.
 
 La PR liste aussi les règles de branche qui manquent. Relis les commandes avant de merger : Jules lit sa config sur la branche par défaut.

@@ -1,0 +1,9 @@
+{
+  "id": "mul",
+  "fixture": "fixtures/node-basic",
+  "type": "feature",
+  "issue": {
+    "title": "Ajouter une multiplication",
+    "body": "@jules ajoute une fonction `mul(a, b)` dans `src/math.js`, qui renvoie le produit de deux nombres, avec ses tests."
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "id": "sum-strings",
+  "fixture": "fixtures/node-basic",
+  "type": "bug",
+  "issue": {
+    "title": "sum concatène des chaînes",
+    "body": "@jules `sum(\"1\", 2)` renvoie `\"12\"` au lieu de `3`. Attendu : les arguments numériques passés en chaîne sont convertis en nombres. Reproduction : `node -e 'import(\"./src/math.js\").then(m => console.log(m.sum(\"1\", 2)))'`."
+  }
+}

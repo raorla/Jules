@@ -2,12 +2,22 @@
 import { verifyAuditChain } from "@jules/audit";
 import { DEFAULT_ORG_ID, createDatabase, migrate, orgs, secrets } from "@jules/db";
 import { OctokitGitHubApp } from "@jules/forge";
-import { SandboxDriver } from "@jules/sandbox";
+import { SandboxDriver, parseAllowlist } from "@jules/sandbox";
 import { SecretStore, generateMasterKey, keyringFromEnv, parseMasterKey } from "@jules/secrets";
+import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { GITHUB_APP_KEY_SECRET, loadBaseEnv, loadSecretsEnv, loadWorkerEnv } from "./config.js";
+import {
+  ANTHROPIC_KEY_SECRET,
+  GITHUB_APP_KEY_SECRET,
+  loadBaseEnv,
+  loadSecretsEnv,
+  loadWorkerEnv,
+} from "./config.js";
+import { compareEvals, runEvals, type EvalResult } from "./evals.js";
 import { createLogger } from "./logger.js";
 import { liftStop, stopAll } from "./emergency.js";
+import { computeMetrics, renderMetrics } from "./metrics.js";
+import { purgeExpired } from "./retention.js";
 import { reconcileDeliveries } from "./reconcile.js";
 
 // Commandes d'exploitation du serveur (`jules …`). Elles marchent sans l'api.
@@ -23,6 +33,12 @@ const USAGE = `usage : jules <commande>
                                (l'ancienne clé dans JULES_MASTER_KEY_PREVIOUS)
   audit verify                 vérifie la chaîne du journal d'audit de chaque organisation
   reconcile [--hours <n>]      redemande à GitHub les webhooks manqués (72 h maximum)
+  eval run --suite <dir> --prompts <dir> --label <l> --out <f>
+                               joue la suite d'evals avec ces prompts (vrai modèle, coûte de l'argent)
+  eval compare <base> <cand> [--tolerance <n>]
+                               refuse (code 1) un candidat dont le score régresse
+  report [--days <n>]          métriques des tâches des n derniers jours (7 par défaut)
+  purge                        applique les durées de conservation (ARCHITECTURE.md §18)
   stop --all [--reason <r>]    arrêt d'urgence : bloque tout, révoque les jetons, tue les sandboxes
   stop --lift                  lève l'arrêt d'urgence
 `;
@@ -62,6 +78,12 @@ async function main(argv: string[]): Promise<number> {
       all: { type: "boolean" },
       lift: { type: "boolean" },
       reason: { type: "string" },
+      days: { type: "string" },
+      suite: { type: "string" },
+      prompts: { type: "string" },
+      label: { type: "string" },
+      out: { type: "string" },
+      tolerance: { type: "string" },
     },
   });
   const [command, sub, arg] = positionals;
@@ -153,6 +175,99 @@ async function main(argv: string[]): Promise<number> {
         }
       }
       return ok ? 0 : 2;
+    });
+  }
+
+  if (command === "eval" && sub === "compare" && arg && positionals[3]) {
+    const read = (path: string) => JSON.parse(readFileSync(path, "utf8")) as EvalResult;
+    const result = compareEvals(
+      read(arg),
+      read(positionals[3]),
+      values.tolerance ? Number(values.tolerance) : 2,
+    );
+    process.stdout.write(
+      `${result.ok ? "accepté" : "REFUSÉ"} : score ${result.delta >= 0 ? "+" : ""}${result.delta}${result.regressions.length ? `\nrégressions : ${result.regressions.join(" ; ")}` : ""}\n`,
+    );
+    return result.ok ? 0 : 1;
+  }
+
+  if (
+    command === "eval" &&
+    sub === "run" &&
+    values.suite &&
+    values.prompts &&
+    values.label &&
+    values.out
+  ) {
+    const env = loadWorkerEnv();
+    return withDatabase(env.DATABASE_URL, async ({ db }) => {
+      const apiKey = (
+        await new SecretStore(db, keyringFromEnv(env)).get(DEFAULT_ORG_ID, ANTHROPIC_KEY_SECRET)
+      )
+        ?.toString("utf8")
+        .trim();
+      if (!apiKey) {
+        throw new Error(`secret ${ANTHROPIC_KEY_SECRET} absent`);
+      }
+      const result = await runEvals({
+        db,
+        driver: new SandboxDriver({
+          runtime: env.JULES_SANDBOX_RUNTIME,
+          egressImage: env.JULES_EGRESS_IMAGE,
+          instance: `eval-${values.label ?? "x"}`,
+        }),
+        log: createLogger(env.LOG_LEVEL),
+        suiteDir: values.suite as string,
+        label: values.label as string,
+        config: {
+          promptsDir: values.prompts as string,
+          sandboxImage: env.JULES_SANDBOX_IMAGE,
+          egressAllow: parseAllowlist(env.JULES_EGRESS_ALLOW),
+          language: env.JULES_LANGUAGE,
+          model: { upstream: env.JULES_MODEL_UPSTREAM, apiKey },
+          developer: {
+            model: env.JULES_DEVELOPER_MODEL,
+            effort: env.JULES_DEVELOPER_EFFORT,
+            fallbackModel: env.JULES_DEVELOPER_FALLBACK_MODEL,
+            maxTurns: env.JULES_DEVELOPER_MAX_TURNS,
+            budgetUsd: env.JULES_DEVELOPER_BUDGET_USD,
+            timeoutMs: env.JULES_DEVELOPER_TIMEOUT_MIN * 60_000,
+          },
+          taskBudgetUsd: env.JULES_TASK_BUDGET_USD,
+          maxConcurrentRuns: 1,
+          providerRetryBaseMs: 60_000,
+          maxAttempts: 3,
+        },
+      });
+      writeFileSync(values.out as string, JSON.stringify(result, null, 2));
+      process.stdout.write(
+        `${values.label} : ${result.total}/100 sur ${result.tasks.length} tâche(s)\n`,
+      );
+      return 0;
+    });
+  }
+
+  if (command === "report") {
+    const env = loadBaseEnv();
+    const days = values.days ? Number(values.days) : 7;
+    const until = new Date();
+    const since = new Date(until.getTime() - days * 86_400_000);
+    return withDatabase(env.DATABASE_URL, async ({ db }) => {
+      process.stdout.write(
+        renderMetrics(await computeMetrics(db, { since, until }), { since, until }),
+      );
+      return 0;
+    });
+  }
+
+  if (command === "purge") {
+    const env = loadBaseEnv();
+    return withDatabase(env.DATABASE_URL, async ({ db }) => {
+      const report = await purgeExpired(db, {
+        runsDir: process.env.JULES_RUNS_DIR ?? "/var/lib/jules/runs",
+      });
+      process.stdout.write(`${JSON.stringify(report)}\n`);
+      return 0;
     });
   }
 

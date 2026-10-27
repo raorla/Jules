@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Milestones **M0–M4 are implemented**: issue → triage → spec → design (human gates H1/H2 per risk and autonomy) → developer in a gVisor sandbox → push → draft PR → verification gates replayed by the worker → AI review on another model (G6, COMMENT review, `Jules / review` check run, traceability matrix in the PR) → human review, with `/jules fix` and "Request changes" looping back to the developer, plus `@jules setup` onboarding. M5 (metrics, evals, learner) is next. The design documents are written in French; keep that language when editing them, and use French for user-facing strings and code comments, matching the existing code.
+Milestones **M0–M4 are implemented**: issue → triage → spec → design (human gates H1/H2 per risk and autonomy) → developer in a gVisor sandbox → push → draft PR → verification gates replayed by the worker → AI review on another model (G6, COMMENT review, `Jules / review` check run, traceability matrix in the PR) → human review, with `/jules fix` and "Request changes" looping back to the developer, plus `@jules setup` onboarding; then the learner proposes lessons that a human approves (`/jules lesson approve`) and that are injected into later tasks. `jules report` computes the WORKFLOW §10 metrics, `jules eval run|compare` gates prompt changes on the eval suite in `evals/`, and retention purging runs hourly. Étape 1 (the core, M0–M5) is complete; M6 (API and web UI) is next. The design documents are written in French; keep that language when editing them, and use French for user-facing strings and code comments, matching the existing code.
 
 | File | Role |
 |---|---|
@@ -51,7 +51,7 @@ pnpm typecheck                          # tsc per package, no build needed
 pnpm lint                               # ESLint (type-aware) + Prettier check
 pnpm build                              # tsc to dist/, in dependency order
 pnpm db:generate                        # migration from packages/db/src/schema.ts
-pnpm jules --help                       # operations CLI (migrate, secrets, audit verify, reconcile, stop --all)
+pnpm jules --help                       # operations CLI (migrate, secrets, audit verify, reconcile, report, purge, eval, stop --all)
 JULES_TEST_SKIP_BUILD=1 pnpm --filter @jules/worker exec vitest run test/sandbox-e2e.test.ts  # reuse built test images
 ```
 

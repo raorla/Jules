@@ -32,6 +32,7 @@ import { z } from "zod";
 import type { WorkerDeps } from "./deps.js";
 import { gateG6, reviewSchema, type Review, type Spec } from "@jules/artifacts";
 import { renderStatusComment, statusMarker, type StatusView } from "./messages.js";
+import { withSpan } from "./tracing.js";
 import {
   renderPullRequestBody,
   renderReviewBody,
@@ -498,7 +499,11 @@ export async function drainOutbox(deps: WorkerDeps): Promise<number> {
       if (!executor) {
         throw new Error(`type d'effet inconnu : ${row.kind}`);
       }
-      const result = await executor(deps, row);
+      const result = await withSpan(
+        "effect",
+        { "jules.effect": row.kind, "jules.attempt": row.attempts },
+        () => executor(deps, row),
+      );
       await deps.db
         .update(outbox)
         .set({ status: "done", result, doneAt: sql`now()`, lockedUntil: null, lastError: null })

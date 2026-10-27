@@ -8,6 +8,7 @@ import { handleCapability } from "./capabilities.js";
 import type { Masker } from "./masking.js";
 import { anthropicError, forwardToModel } from "./model-proxy.js";
 import { bearer, hashRunToken } from "./tokens.js";
+import { withSpan } from "../tracing.js";
 
 // Broker d'une exécution (ARCHITECTURE.md §4.3). Il écoute sur un socket Unix propre à l'exécution,
 // monté dans son sandbox : seul ce sandbox peut le joindre, et seul son jeton y est accepté.
@@ -80,20 +81,25 @@ export async function startBroker(
       }
     }
     const stopped = await isStopped(db, auth.run.orgId, { repoId: auth.task.repoId });
-    const outcome = await db.transaction((tx) =>
-      handleCapability(
-        tx,
-        {
-          orgId: auth.run.orgId,
-          runId: auth.run.id,
-          taskId: auth.task.id,
-          role: auth.run.role as Role,
-          stopped,
-        },
-        request.params.name,
-        input,
-        deps.masker,
-      ),
+    const outcome = await withSpan(
+      "capability",
+      { "jules.run": auth.run.id, "jules.capability": request.params.name },
+      () =>
+        db.transaction((tx) =>
+          handleCapability(
+            tx,
+            {
+              orgId: auth.run.orgId,
+              runId: auth.run.id,
+              taskId: auth.task.id,
+              role: auth.run.role as Role,
+              stopped,
+            },
+            request.params.name,
+            input,
+            deps.masker,
+          ),
+        ),
     );
     log.info(
       {

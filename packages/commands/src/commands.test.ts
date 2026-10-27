@@ -13,6 +13,14 @@ describe("parseCommand", () => {
     ["/jules fix renomme la variable", { name: "fix", instructions: "renomme la variable" }],
     ["/jules budget +10", { name: "budget", addUsd: 10 }],
     ["/jules budget +2.5$", { name: "budget", addUsd: 2.5 }],
+    [
+      "/jules lesson approve 1f3a9c0d",
+      { name: "lesson", decision: "approve", lessonId: "1f3a9c0d" },
+    ],
+    [
+      "/jules lesson REJECT 1f3a9c0d-1111-4222-8333-444455556666",
+      { name: "lesson", decision: "reject", lessonId: "1f3a9c0d-1111-4222-8333-444455556666" },
+    ],
   ])("%j", (body, command) => {
     expect(parseCommand(body)).toEqual({ command });
   });
@@ -25,6 +33,8 @@ describe("parseCommand", () => {
     "/jules budget 10",
     "/jules budget +0",
     "/jules budget +5000",
+    "/jules lesson approve",
+    "/jules lesson keep 1f3a9c0d",
   ])("signale une commande invalide : %j", (body) => {
     expect(parseCommand(body)).toHaveProperty("error");
   });
@@ -61,6 +71,7 @@ describe("droits (WORKFLOW.md §7)", () => {
     [{ name: "approve" }, "high", "maintain"],
     [{ name: "budget", addUsd: 5 }, undefined, "maintain"],
     [{ name: "stop_all" }, undefined, "admin"],
+    [{ name: "lesson", decision: "approve", lessonId: "1f3a9c0d" }, undefined, "maintain"],
     [{ name: "cancel" }, "high", "write"],
   ] as const)("%j en risque %s demande %s", (command, risk, role) => {
     expect(requiredRole(command, risk)).toBe(role);

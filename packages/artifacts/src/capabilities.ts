@@ -15,6 +15,18 @@ export const capabilityInputs = {
   submit_spec: specSchema,
   submit_design: designSchema,
   submit_review: reviewSchema,
+  propose_lessons: z.object({
+    lessons: z
+      .array(
+        z.object({
+          text: line(500).describe("La leçon, applicable aux tâches futures de ce repo."),
+          source: line(300).describe(
+            "D'où elle vient : commentaire, commit humain, raison de fermeture.",
+          ),
+        }),
+      )
+      .max(3),
+  }),
   submit_build: z.object({
     summary: line(4000).describe("Ce qui a été fait, pour la description de la PR."),
     commitMessage: z
@@ -68,6 +80,8 @@ export const capabilityDescriptions: Record<CapabilityName, string> = {
     "Soumet la spec : problème, critères d'acceptation AC-n (Étant donné / Quand / Alors), hors périmètre, hypothèses, reproduction pour un bug. Une seule fois.",
   submit_design:
     "Soumet la conception : approche, étapes, fichiers, plan de test (chaque AC couvert), retour arrière, migration et ADR s'il y a lieu. Une seule fois.",
+  propose_lessons:
+    "Propose au plus 3 leçons pour les prochaines tâches de ce repo, chacune avec sa source. Un humain les validera. Une seule fois ; une liste vide est acceptée.",
   submit_review:
     "Soumet la review : verdict (approve, request_changes, escalate), résumé, statut de chaque critère AC-n (met, partial, missing) et findings (blocker, major, minor, nit) avec fichier et ligne. Une seule fois.",
   submit_build:

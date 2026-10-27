@@ -1,0 +1,49 @@
+name: evals
+
+# Un changement de prompt passe la suite d'evals avant d'être mergé (WORKFLOW.md §11).
+# Appelle le vrai modèle : il ne tourne que si le secret JULES_EVAL_ANTHROPIC_KEY est configuré.
+on:
+  pull_request:
+    paths: ["prompts/**", "evals/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    if: ${{ vars.JULES_EVALS_ENABLED == 'true' }}
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env: { POSTGRES_PASSWORD: evals, POSTGRES_DB: jules_evals }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:evals@localhost:5432/jules_evals
+      JULES_MASTER_KEY: ${{ secrets.JULES_EVAL_MASTER_KEY }}
+      GITHUB_APP_ID: "1"
+      JULES_SANDBOX_RUNTIME: runc
+      JULES_SANDBOX_IMAGE: jules-sandbox-node:ci
+      JULES_EGRESS_IMAGE: jules-egress:ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: docker build -f deploy/Dockerfile --target sandbox-node -t jules-sandbox-node:ci .
+      - run: docker build -f deploy/Dockerfile --target egress -t jules-egress:ci .
+      - run: pnpm jules migrate
+      - run: printf '%s' "${{ secrets.JULES_EVAL_ANTHROPIC_KEY }}" | pnpm jules secrets set anthropic_api_key
+      - name: Prompts de la branche principale
+        run: git worktree add /tmp/main origin/${{ github.base_ref || 'main' }}
+      - run: pnpm jules eval run --suite evals --prompts /tmp/main/prompts --label main --out /tmp/main.json
+      - run: pnpm jules eval run --suite evals --prompts prompts --label candidat --out /tmp/candidat.json
+      - run: pnpm jules eval compare /tmp/main.json /tmp/candidat.json

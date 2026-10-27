@@ -36,17 +36,24 @@ function sse(res: ServerResponse, events: Record<string, unknown>[]) {
 }
 
 /** Un scénario par rôle, reconnu à l'outil de soumission présent dans la requête. */
-export type Scripts = Partial<Record<"triage" | "spec" | "design" | "build" | "review", Step[]>>;
+export type Scripts = Partial<
+  Record<"triage" | "spec" | "design" | "build" | "review" | "learn", Step[]>
+>;
 const ROLE_TOOLS = {
   triage: "mcp__jules__submit_triage",
   spec: "mcp__jules__submit_spec",
   design: "mcp__jules__submit_design",
   build: "mcp__jules__submit_build",
   review: "mcp__jules__submit_review",
+  learn: "mcp__jules__propose_lessons",
 } as const;
 
-export async function startFakeModel(input: Step[] | Scripts): Promise<FakeModel> {
-  const scripts: Scripts = Array.isArray(input) ? { build: input } : input;
+/** Scénarios fixes, ou choisis selon la requête (par exemple selon le prompt système reçu). */
+export async function startFakeModel(
+  input: Step[] | Scripts | ((body: Record<string, unknown>) => Scripts),
+): Promise<FakeModel> {
+  const pick = (body: Record<string, unknown>): Scripts =>
+    typeof input === "function" ? input(body) : Array.isArray(input) ? { build: input } : input;
   const requests: FakeModel["requests"] = [];
   let overloaded = 0;
   let usage = { input_tokens: 100, output_tokens: 20 };
@@ -82,7 +89,7 @@ export async function startFakeModel(input: Step[] | Scripts): Promise<FakeModel
     );
     const assistantTurns = (body.messages ?? []).filter((m) => m.role === "assistant").length;
     const step: Step = role
-      ? (scripts[role]?.[assistantTurns] ?? { text: "Terminé." })
+      ? (pick(body)[role]?.[assistantTurns] ?? { text: "Terminé." })
       : { text: "ok" };
     const messageId = `msg_${++id}`;
     const block =

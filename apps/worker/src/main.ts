@@ -9,9 +9,11 @@ import { stopAll } from "./emergency.js";
 import { ANTHROPIC_KEY_SECRET, GITHUB_APP_KEY_SECRET, loadWorkerEnv } from "./config.js";
 import { createLogger } from "./logger.js";
 import { Orchestrator } from "./orchestrator.js";
+import { startTracing } from "./tracing.js";
 import { Worker } from "./worker.js";
 
 const env = loadWorkerEnv();
+const stopTracing = await startTracing(process.env);
 const log = createLogger(env.LOG_LEVEL);
 const database = createDatabase(env.DATABASE_URL);
 
@@ -85,13 +87,16 @@ const worker = new Worker(
         stopAll(database.db, driver, { orgId: DEFAULT_ORG_ID, reason: "/jules stop-all", actorId }),
     },
   },
-  { databaseUrl: env.DATABASE_URL, orchestrator },
+  { databaseUrl: env.DATABASE_URL, orchestrator, runsDir: env.JULES_RUNS_DIR },
 );
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     log.info({ signal }, "arrêt du worker");
-    void worker.stop().then(() => database.close());
+    void worker
+      .stop()
+      .then(() => database.close())
+      .then(() => stopTracing?.());
   });
 }
 

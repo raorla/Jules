@@ -198,6 +198,8 @@ Sur un repo de test, puis sur 2 ou 3 de tes vrais repos : une issue `@jules` dev
 
 ### M5 — Mesures, evals et apprentissage (M)
 
+> Statut (27/10/2026) : code livré. Un prompt candidat qui fait régresser le score de la suite est refusé par `jules eval compare` (test automatisé, avec le vrai sandbox). `jules report` donne le taux d'acceptation, le coût par PR mergée et les gates au premier essai. Le learner propose des leçons, un humain les valide avec `/jules lesson approve`, et elles sont injectées dans les tâches suivantes. La purge de rétention tourne chaque heure, et les traces OpenTelemetry partent dès que `OTEL_EXPORTER_OTLP_ENDPOINT` est défini. Restent : la vraie suite de 15 à 30 tâches tirées de tes repos ([evals/README.md](evals/README.md)), et la mesure des défauts échappés.
+
 **Livrables**
 - Les traces OpenTelemetry et les métriques ([WORKFLOW.md §10](WORKFLOW.md#10-métriques-et-promotion-dautonomie)).
 - Un rapport hebdomadaire sous forme de commande `jules report` ; il passera dans l'interface web en M6.
