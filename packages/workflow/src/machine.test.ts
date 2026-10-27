@@ -170,6 +170,28 @@ describe("réception et questions", () => {
   });
 });
 
+describe("approbation redemandée en cours de route", () => {
+  it("chemins protégés en développement : H2, puis retour en développement", () => {
+    const asked = next(ctx("building"), { type: "approval_required", resume: "building" });
+    expect(asked).toMatchObject({
+      next: "awaiting_design_approval",
+      patch: { resumeState: "building" },
+    });
+    expect(
+      next(ctx("awaiting_design_approval", { resumeState: "building" }), { type: "approve" }),
+    ).toMatchObject({ next: "building", patch: { resumeState: null } });
+  });
+
+  it("risque réel dépassé après les gates : H2, puis review", () => {
+    expect(next(ctx("verifying"), { type: "approval_required", resume: "reviewing" }).next).toBe(
+      "awaiting_design_approval",
+    );
+    expect(
+      next(ctx("awaiting_design_approval", { resumeState: "reviewing" }), { type: "approve" }).next,
+    ).toBe("reviewing");
+  });
+});
+
 describe("boucles bornées", () => {
   it("revient en développement sur une gate en échec, puis bloque", () => {
     expect(next(ctx("verifying"), { type: "gates_failed" })).toMatchObject({

@@ -73,6 +73,8 @@ export type TaskEvent =
   | { type: "approve" }
   | { type: "revise" }
   | { type: "build_submitted" }
+  /** Chemins protégés touchés (G4.1) ou risque réel au-delà de ce qui a été approuvé : H2 redemandée. */
+  | { type: "approval_required"; resume: "building" | "reviewing" }
   | { type: "gates_passed" }
   | { type: "gates_failed" }
   | { type: "review_approved" }
@@ -253,7 +255,10 @@ export function transition(ctx: TaskContext, event: TaskEvent): TransitionResult
 
     case "awaiting_design_approval":
       if (event.type === "approve") {
-        return ok("building", "conception approuvée (H2)");
+        // Après une H2 redemandée en cours de route, on reprend là où elle a été exigée.
+        return ctx.resumeState
+          ? ok(ctx.resumeState, "approbation donnée (H2)", { resumeState: null })
+          : ok("building", "conception approuvée (H2)");
       }
       if (event.type === "revise") {
         return ok("designing", "conception à reprendre");
@@ -267,11 +272,25 @@ export function transition(ctx: TaskContext, event: TaskEvent): TransitionResult
       if (event.type === "build_submitted") {
         return ok("verifying", "build soumise");
       }
+      if (event.type === "approval_required") {
+        return ok(
+          "awaiting_design_approval",
+          "chemins protégés : approbation humaine requise (G4.1)",
+          { resumeState: event.resume },
+        );
+      }
       break;
 
     case "verifying":
       if (event.type === "gates_passed") {
         return ok("reviewing", "gates vertes");
+      }
+      if (event.type === "approval_required") {
+        return ok(
+          "awaiting_design_approval",
+          "risque réel au-delà de ce qui a été approuvé : H2 requise",
+          { resumeState: event.resume },
+        );
       }
       if (event.type === "gates_failed") {
         return ctx.iterations + 1 >= LIMITS.verificationIterations
