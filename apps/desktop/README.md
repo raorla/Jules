@@ -29,6 +29,12 @@ Paquets Linux d'essai, sur ta machine (AppImage, deb et rpm dans `src-tauri/targ
 pnpm --filter @jules/desktop tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
 ```
 
+Le mode local lance les images Jules de la version de l'app (`jules-api:0.1.0`, etc.). Tant qu'elles ne sont pas publiées, construis-les depuis le repo, une fois par version :
+
+```bash
+deploy/local/build-images.sh
+```
+
 ## Publier une version signée
 
 1. **Clé des mises à jour**, une fois : `pnpm --filter @jules/desktop tauri signer generate -w ~/.tauri/jules.key`. Recopie la clé publique dans `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`) et l'adresse du dépôt dans `endpoints`. L'app refuse toute mise à jour qui n'est pas signée par cette clé.

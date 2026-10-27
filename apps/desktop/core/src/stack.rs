@@ -95,9 +95,53 @@ pub fn compose_env(config: &StackConfig) -> Vec<(&'static str, String)> {
     env
 }
 
+/// Une image Jules absente de la machine et du registre (Docker, puis Podman).
+const MISSING_IMAGE: [&str; 4] =
+    ["pull access denied", "requested access to the resource is denied", "manifest unknown", "No such image"];
+
+/// Message d'un `compose up` en échec, affiché dans l'app : la dernière erreur de compose, sans les
+/// valeurs passées dans l'environnement ; une image Jules introuvable donne la marche à suivre.
+pub fn compose_failure(program: &str, version: &str, stderr: &str, hidden: &[&str]) -> String {
+    let lines: Vec<&str> = stderr.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    if lines.iter().any(|line| line.contains("jules-") && MISSING_IMAGE.iter().any(|m| line.contains(m))) {
+        return format!(
+            "Images Jules {version} introuvables : elles ne sont pas encore publiées. Construis-les depuis le repo Jules (apps/desktop/README.md), puis réessaie."
+        );
+    }
+    // « Error response from daemon: … » (Docker), « Error: … » (Podman) ; pas « Container … Error ».
+    let is_error = |line: &&&str| line.starts_with("Error") || line.contains("error:");
+    let Some(line) = lines.iter().rev().find(is_error).or(lines.last()) else {
+        return format!("{program} compose up a échoué");
+    };
+    let mut line = line.to_string();
+    for value in hidden.iter().filter(|value| !value.is_empty()) {
+        line = line.replace(value, "***");
+    }
+    format!("{program} compose up a échoué : {}", line.chars().take(300).collect::<String>())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_compose_up_says_why() {
+        let pull = " Image jules-worker:0.1.0 Pulling\n Image jules-worker:0.1.0 Error pull access denied for jules-worker, repository does not exist or may require 'docker login'\nError response from daemon: pull access denied for jules-worker, repository does not exist\n";
+        assert_eq!(
+            compose_failure("docker", "0.1.0", pull, &[]),
+            "Images Jules 0.1.0 introuvables : elles ne sont pas encore publiées. Construis-les depuis le repo Jules (apps/desktop/README.md), puis réessaie."
+        );
+        let podman = "Error: initializing source docker://jules-api:0.1.0: reading manifest 0.1.0 in docker.io/library/jules-api: requested access to the resource is denied\n";
+        assert!(compose_failure("podman", "0.1.0", podman, &[]).starts_with("Images Jules 0.1.0 introuvables"));
+        // Une autre erreur : la dernière ligne d'erreur, sans les valeurs de l'environnement.
+        let port = " Container jules-local-api-1 Starting\nError response from daemon: failed to set up container networking: driver failed programming external connectivity on endpoint jules-local-api-1: Bind for 127.0.0.1:43117 failed: port is already allocated jeton-secret\n Container jules-local-api-1 Error\n";
+        let message = compose_failure("docker", "0.1.0", port, &["jeton-secret", ""]);
+        assert!(message.starts_with("docker compose up a échoué : Error response from daemon: failed to set up"), "{message}");
+        assert!(message.contains("***") && !message.contains("jeton-secret"));
+        assert!(message.chars().count() <= "docker compose up a échoué : ".chars().count() + 300);
+        assert_eq!(compose_failure("docker", "0.1.0", "un souci\n", &[]), "docker compose up a échoué : un souci");
+        assert_eq!(compose_failure("docker", "0.1.0", "\n  \n", &[]), "docker compose up a échoué");
+    }
 
     #[test]
     fn login_hash_matches_the_api() {

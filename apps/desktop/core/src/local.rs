@@ -12,7 +12,7 @@ use std::time::Duration;
 use crate::engine::{parse_docker_info, parse_podman_info, Engine, DOCKER_INFO_FORMAT, PODMAN_INFO_FORMAT};
 use crate::handoff::{random_master_key, serve_once, HandoffError, Secrets};
 use crate::pkce::random_token;
-use crate::stack::{compose_command, compose_env, daemon_path, login_hash, StackConfig, PROJECT};
+use crate::stack::{compose_command, compose_env, compose_failure, daemon_path, login_hash, StackConfig, PROJECT};
 
 pub const LOCAL_API_PORT: u16 = 43117;
 pub const MASTER_KEY_ENTRY: &str = "local:master-key";
@@ -124,15 +124,17 @@ fn handoff_server(engine: &Engine, dir: &Path, token: &str, secrets: Secrets) ->
     }
     #[cfg(unix)]
     {
-        let socket = dir.join("handoff.sock");
-        let _ = std::fs::remove_file(&socket);
+        // Un socket par essai : après un lancement raté, l'attente du précédent (jusqu'à son délai)
+        // ne doit pas effacer celui de l'essai suivant en se terminant.
+        let name = format!("handoff-{}.sock", random_token(8));
+        let socket = dir.join(&name);
         let listener = std::os::unix::net::UnixListener::bind(&socket).map_err(|e| e.to_string())?;
         let server = std::thread::spawn(move || {
             let result = serve_once(&listener, &token, &secrets, HANDOFF_TIMEOUT);
             let _ = std::fs::remove_file(&socket);
             result
         });
-        Ok(("unix:/run/jules/handoff/handoff.sock".to_string(), server))
+        Ok((format!("unix:/run/jules/handoff/{name}"), server))
     }
     #[cfg(not(unix))]
     {
@@ -190,10 +192,11 @@ pub fn start(paths: &LocalPaths, vault: &dyn Vault, version: &str) -> Result<Sta
         .arg(&paths.compose)
         .args(["up", "-d", "--wait"])
         .envs(compose_env(&config))
-        .status()
+        .output()
         .map_err(|e| e.to_string())?;
-    if !up.success() {
-        return Err(format!("{program} compose up a échoué ({up})"));
+    if !up.status.success() {
+        let stderr = String::from_utf8_lossy(&up.stderr);
+        return Err(compose_failure(program, version, &stderr, &[&token, &hash, &handoff_url]));
     }
     server.join().map_err(|_| "remise des secrets interrompue".to_string())?.map_err(|e| e.to_string())?;
     let running = healthy(LOCAL_API_PORT);
@@ -288,15 +291,21 @@ mod tests {
         let engine = parse_docker_info("28.5.1\nUbuntu\nrunc runsc\n").unwrap();
         let secrets = Secrets { master_key: random_master_key(), previous_keys: vec![], anthropic_api_key: None };
         let (url, server) = handoff_server(&engine, &dir, "jeton", secrets).unwrap();
-        assert_eq!(url, "unix:/run/jules/handoff/handoff.sock");
-        let mut stream = std::os::unix::net::UnixStream::connect(dir.join("handoff.sock")).unwrap();
+        let name = url.strip_prefix("unix:/run/jules/handoff/").unwrap();
+        assert!(name.starts_with("handoff-") && name.ends_with(".sock"), "{url}");
+        // L'essai suivant a son propre socket.
+        let other = Secrets { master_key: random_master_key(), previous_keys: vec![], anthropic_api_key: None };
+        let (next, _) = handoff_server(&engine, &dir, "autre", other).unwrap();
+        assert_ne!(next, url);
+        let mut stream = std::os::unix::net::UnixStream::connect(dir.join(name)).unwrap();
         write!(stream, "POST /handoff HTTP/1.1\r\nAuthorization: Bearer jeton\r\n\r\n").unwrap();
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         assert!(response.contains("\"masterKey\""));
         assert_eq!(server.join().unwrap(), Ok(()));
-        // Le socket disparaît après la remise.
-        assert!(!dir.join("handoff.sock").exists());
+        // Le socket disparaît après la remise ; celui de l'essai suivant reste.
+        assert!(!dir.join(name).exists());
+        assert!(dir.join(next.strip_prefix("unix:/run/jules/handoff/").unwrap()).exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

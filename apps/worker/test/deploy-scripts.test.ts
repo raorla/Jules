@@ -26,6 +26,7 @@ case "$*" in
   "info --format "*) echo "\${FAKE_RUNTIMES:-io.containerd.runc.v2 runc runsc}" ;;
   *"run --rm backup"*) exit "\${FAKE_BACKUP_EXIT:-0}" ;;
   *"run --rm migrate"*) exit "\${FAKE_MIGRATE_EXIT:-0}" ;;
+  "compose -f deploy/local/compose.yaml --profile images build") echo "JULES_VERSION=$JULES_VERSION" >> "$DOCKER_LOG" ;;
 esac
 exit 0
 `;
@@ -191,5 +192,28 @@ describe("montée de version (M11)", () => {
     expect(failed.calls.some((c) => c.includes(" up "))).toBe(false);
 
     expect(w.run("upgrade.sh", ["main; rm -rf /"]).status).toBe(1);
+  });
+});
+
+describe("images du mode local (M10)", () => {
+  it("construit les images à la version de l'app, et refuse une version douteuse", () => {
+    const w = workspace();
+    mkdirSync(join(w.root, "apps", "desktop"), { recursive: true });
+    writeFileSync(
+      join(w.root, "apps", "desktop", "package.json"),
+      JSON.stringify({ name: "@jules/desktop", version: "2.3.4", private: true }, null, 2),
+    );
+    const own = w.run("local/build-images.sh", []);
+    expect(own.status, own.stderr).toBe(0);
+    expect(own.calls).toEqual([
+      "docker compose -f deploy/local/compose.yaml --profile images build",
+      "JULES_VERSION=2.3.4",
+    ]);
+    const given = w.run("local/build-images.sh", ["0.1.0"]);
+    expect(given.status, given.stderr).toBe(0);
+    expect(given.calls.at(-1)).toBe("JULES_VERSION=0.1.0");
+    const refused = w.run("local/build-images.sh", ["1.0;rm -rf /"]);
+    expect(refused.status).toBe(1);
+    expect(refused.calls).toEqual([]);
   });
 });
