@@ -78,6 +78,13 @@
       "when": 1793105938228,
       "tag": "0010_m8_security",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793107358773,
+      "tag": "0011_m9_desktop",
+      "breakpoints": true
     }
   ]
 }

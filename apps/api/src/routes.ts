@@ -1,3 +1,4 @@
+import type { OutgoingHttpHeaders } from "node:http";
 import { appendAudit, verifyAuditChain } from "@jules/audit";
 import { commandSchema, requiredRole, type JulesRole } from "@jules/commands";
 import {
@@ -570,8 +571,14 @@ export function registerRoutes(
 
   // Temps réel (SSE) : chaque changement de tâche est poussé ; le client recharge ce qu'il affiche.
   app.get("/v1/events", { preHandler: g("viewer") }, async (request, reply) => {
+    // `hijack` court-circuite Fastify : les en-têtes déjà posés (CORS du desktop, sécurité) sont
+    // recopiés à la main, sinon la webview ne peut pas lire le flux.
+    const preset = Object.fromEntries(
+      Object.entries(reply.getHeaders()).filter(([, value]) => value !== undefined),
+    ) as OutgoingHttpHeaders;
     reply.hijack();
     reply.raw.writeHead(200, {
+      ...preset,
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
       connection: "keep-alive",

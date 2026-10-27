@@ -20,6 +20,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { api, type Me } from "./api.js";
 import { Chip, Dialog, useSensitiveAction } from "./components.js";
+import { useDesktopNotifications } from "./desktop.js";
 
 // App shell du skill (components.md §4) : barre latérale flottante, colonne de cartes à 8 px.
 // L'arrêt d'urgence reste visible pour les admins, sur chaque écran (DESIGN.md §5).
@@ -160,6 +161,7 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
   const pending =
     (approvals.data?.length ?? 0) + (plans.data?.filter((p) => p.taskId === null).length ?? 0);
   // Le compte ne vaut qu'une fois les deux listes chargées : sinon, un faux « nouveau » au chargement.
+  useDesktopNotifications(pending);
   const toast = useApprovalNotice(
     approvals.isSuccess && plans.isSuccess ? pending : undefined,
     t("notify.approval"),

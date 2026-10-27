@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
 import { Link, useParams } from "@tanstack/react-router";
 import { Fingerprint, Rocket, Server as ServerIcon, Snowflake, Terminal } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   api,
@@ -50,7 +50,23 @@ const STATUS_TONE = (status: string): Tone =>
           : "neutral";
 
 /** Un plan à approuver : environnement, serveur, actions exactes, impact, vérification, retour arrière. */
-export function PlanCard({ plan, actionable = true }: { plan: Plan; actionable?: boolean }) {
+export function PlanCard({
+  plan,
+  actionable = true,
+  highlighted = false,
+}: {
+  plan: Plan;
+  actionable?: boolean;
+  /** Ouvert depuis une notification : le plan est mis en vue, le bouton d'approbation a le focus. */
+  highlighted?: boolean;
+}) {
+  const approveRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (highlighted) {
+      approveRef.current?.scrollIntoView({ block: "center" });
+      approveRef.current?.focus();
+    }
+  }, [highlighted]);
   const { t, i18n } = useTranslation();
   const client = useQueryClient();
   const sensitive = useSensitiveAction();
@@ -135,7 +151,7 @@ export function PlanCard({ plan, actionable = true }: { plan: Plan; actionable?:
               <button className="pill ghost-crit" onClick={() => decide("reject")}>
                 {t("plan.reject")}
               </button>
-              <button className="pill primary" onClick={() => decide("approve")}>
+              <button ref={approveRef} className="pill primary" onClick={() => decide("approve")}>
                 {production && <Fingerprint aria-hidden="true" />}
                 {production ? t("plan.approve_prod") : t("plan.approve")}
               </button>
@@ -149,7 +165,7 @@ export function PlanCard({ plan, actionable = true }: { plan: Plan; actionable?:
   );
 }
 
-export function PendingPlans() {
+export function PendingPlans({ highlight }: { highlight?: string | undefined } = {}) {
   const { t } = useTranslation();
   const plans = useQuery({
     queryKey: ["plans", "pending"],
@@ -161,7 +177,7 @@ export function PendingPlans() {
   return (
     <div className="stack" aria-label={t("plan.title")}>
       {plans.data.map((plan) => (
-        <PlanCard key={plan.id} plan={plan} />
+        <PlanCard key={plan.id} plan={plan} highlighted={plan.id === highlight} />
       ))}
     </div>
   );

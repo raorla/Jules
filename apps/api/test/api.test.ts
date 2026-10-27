@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
@@ -620,5 +621,106 @@ describe("Sécurité (M8)", () => {
     const audit = await call(maintainer, "POST", "/v1/audits", { scope: "platform" });
     expect(audit.statusCode).toBe(202);
     expect((await call(maintainer, "POST", "/v1/audits", { scope: "repo" })).statusCode).toBe(400);
+  });
+});
+
+describe("connexion du desktop (M9, RFC 8252 + PKCE)", () => {
+  const pkce = () => {
+    const verifier = randomBytes(32).toString("base64url");
+    return { verifier, challenge: createHash("sha256").update(verifier).digest("base64url") };
+  };
+
+  async function desktopLogin(
+    code: string,
+    challenge: string,
+    redirect = "http://127.0.0.1:53111/callback",
+  ) {
+    const start = await app.inject({
+      url: `/v1/auth/github?client=desktop&challenge=${challenge}&redirect=${encodeURIComponent(redirect)}&state=etat-du-desktop-123`,
+    });
+    if (start.statusCode !== 302) {
+      return { start };
+    }
+    const github = new URL(start.headers.location as string);
+    const cookies = Object.fromEntries(start.cookies.map((c) => [c.name, c.value]));
+    const callback = await app.inject({
+      url: `/v1/auth/github/callback?code=${code}&state=${github.searchParams.get("state") ?? ""}`,
+      cookies,
+    });
+    return { start, callback };
+  }
+
+  it("ouvre une session desktop après l'échange du code avec le vérificateur", async () => {
+    const { verifier, challenge } = pkce();
+    const { callback } = await desktopLogin("root", challenge);
+    expect(callback?.statusCode).toBe(302);
+    expect(callback?.cookies.find((c) => c.name === "jules_session")).toBeUndefined();
+    const back = new URL(callback!.headers.location as string);
+    expect(`${back.origin}${back.pathname}`).toBe("http://127.0.0.1:53111/callback");
+    expect(back.searchParams.get("state")).toBe("etat-du-desktop-123");
+    const exchange = await app.inject({
+      method: "POST",
+      url: "/v1/auth/desktop/token",
+      payload: { code: back.searchParams.get("code"), verifier },
+    });
+    expect(exchange.statusCode).toBe(200);
+    const { token } = exchange.json<{ token: string }>();
+    expect(token).toMatch(/^jds_/);
+    const me = await app.inject({ url: "/v1/me", headers: { authorization: `Bearer ${token}` } });
+    expect(me.json()).toMatchObject({ login: "root" });
+    // Le code ne sert qu'une fois.
+    const replay = await app.inject({
+      method: "POST",
+      url: "/v1/auth/desktop/token",
+      payload: { code: back.searchParams.get("code"), verifier },
+    });
+    expect(replay.statusCode).toBe(401);
+  });
+
+  it("refuse un vérificateur faux et brûle le code, ainsi qu'une redirection hors bouclage", async () => {
+    const { verifier, challenge } = pkce();
+    const { callback } = await desktopLogin("root", challenge);
+    const code = new URL(callback!.headers.location as string).searchParams.get("code");
+    const wrong = await app.inject({
+      method: "POST",
+      url: "/v1/auth/desktop/token",
+      payload: { code, verifier: pkce().verifier },
+    });
+    expect(wrong.statusCode).toBe(401);
+    const late = await app.inject({
+      method: "POST",
+      url: "/v1/auth/desktop/token",
+      payload: { code, verifier },
+    });
+    expect(late.statusCode).toBe(401);
+    for (const redirect of [
+      "https://attaquant.example/callback",
+      "http://127.0.0.1/callback",
+      "http://127.0.0.1:5000/autre",
+      "http://127.0.0.1:5000/callback?x=1",
+    ]) {
+      const { start } = await desktopLogin("root", challenge, redirect);
+      expect(start.statusCode, redirect).toBe(400);
+    }
+    expect((await desktopLogin("root", "trop-court")).start.statusCode).toBe(400);
+  });
+
+  it("autorise la webview Tauri par CORS, sans cookie, et aucune autre origine", async () => {
+    const preflight = await app.inject({
+      method: "OPTIONS",
+      url: "/v1/tasks",
+      headers: { origin: "tauri://localhost", "access-control-request-method": "GET" },
+    });
+    expect(preflight.statusCode).toBe(204);
+    expect(preflight.headers["access-control-allow-origin"]).toBe("tauri://localhost");
+    expect(preflight.headers["access-control-allow-credentials"]).toBeUndefined();
+    const other = await app.inject({
+      url: "/v1/health",
+      headers: { origin: "https://attaquant.example" },
+    });
+    expect(other.headers["access-control-allow-origin"]).toBeUndefined();
+    expect((await app.inject({ url: "/v1/health" })).json()).toMatchObject({
+      desktop: { minVersion: "0.1.0" },
+    });
   });
 });

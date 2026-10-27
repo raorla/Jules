@@ -488,6 +488,7 @@ export function TaskPage() {
 }
 
 export function ApprovalsPage() {
+  const search = useSearch({ from: "/approvals" });
   const { t } = useTranslation();
   const approvals = useQuery({
     queryKey: ["approvals"],
@@ -505,7 +506,7 @@ export function ApprovalsPage() {
         {t("approvals.title")}
         <span> · {list.length + (plans.data?.length ?? 0)}</span>
       </h1>
-      <PendingPlans />
+      <PendingPlans highlight={search.plan} />
       {list.length === 0 && (plans.data?.length ?? 0) > 0 ? null : list.length === 0 ? (
         <Card>
           <EmptyState

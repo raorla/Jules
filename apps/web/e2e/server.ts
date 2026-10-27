@@ -59,6 +59,42 @@ const github = createServer((req, res) => {
     } else if (url.pathname === "/__as" && req.method === "POST") {
       nextLogin = (JSON.parse(body) as { login: string }).login;
       res.end("{}");
+    } else if (url.pathname === "/__plan" && req.method === "POST") {
+      // Un nouveau plan de staging en attente, pour la notification du desktop.
+      void t.db
+        .select({ id: servers.id })
+        .from(servers)
+        .where(eq(servers.name, "web-staging"))
+        .then(([server]) =>
+          t.db
+            .insert(changePlans)
+            .values({
+              orgId: DEFAULT_ORG_ID,
+              serverId: server!.id,
+              plan: {
+                goal: "Redémarrer le cache",
+                server: "web-staging",
+                environment: "staging",
+                actions: [
+                  {
+                    kind: "command",
+                    command: "sudo -n systemctl restart redis",
+                    reason: "vider le cache",
+                  },
+                ],
+                impact: "aucun",
+                verify: ["systemctl is-active redis"],
+                rollback: ["sudo -n systemctl start redis"],
+              },
+              steps: [],
+              planHash: "e2e",
+              environment: "staging",
+              status: "pending_approval",
+              expiresAt: new Date(Date.UTC(2030, 0, 1, 12)),
+            })
+            .returning({ id: changePlans.id }),
+        )
+        .then(([row]) => res.end(JSON.stringify(row)));
     } else if (url.pathname === "/__commands") {
       void t.db
         .select({ name: commands.name, source: commands.source, decision: commands.decision })
@@ -84,6 +120,8 @@ const app = await buildApi({
     apiBase: `http://127.0.0.1:${GITHUB_PORT}`,
   },
   adminLogins: ["root"],
+  // L'interface desktop est testée dans un navigateur, servie par `vite preview` (apps/desktop/e2e).
+  desktopOrigins: ["http://localhost:4320"],
   webDir: fileURLToPath(new URL("../dist", import.meta.url)),
 });
 

@@ -380,5 +380,17 @@
     "security_level": "Agent Sécurité",
     "on": "Activé",
     "off": "Désactivé"
+  },
+  "desktop": {
+    "subtitle": "sur ton bureau.",
+    "server": "Adresse de ton serveur Jules",
+    "connect_server": "Vérifier le serveur",
+    "login": "Se connecter avec GitHub",
+    "waiting_browser": "Termine la connexion dans ton navigateur…",
+    "update_required": "Mise à jour requise",
+    "update_text": "Cette app ({{version}}) est trop ancienne pour ce serveur, qui demande au moins la version {{minimum}}. Installe la mise à jour pour continuer.",
+    "version": "Version",
+    "retry": "Réessayer",
+    "approval_requested": "approbation demandée"
   }
 }

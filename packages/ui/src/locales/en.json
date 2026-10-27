@@ -380,5 +380,17 @@
     "security_level": "Security agent",
     "on": "On",
     "off": "Off"
+  },
+  "desktop": {
+    "subtitle": "on your desktop.",
+    "server": "Your Jules server address",
+    "connect_server": "Check the server",
+    "login": "Sign in with GitHub",
+    "waiting_browser": "Finish signing in in your browser…",
+    "update_required": "Update required",
+    "update_text": "This app ({{version}}) is too old for this server, which requires at least version {{minimum}}. Install the update to continue.",
+    "version": "Version",
+    "retry": "Retry",
+    "approval_requested": "approval requested"
   }
 }

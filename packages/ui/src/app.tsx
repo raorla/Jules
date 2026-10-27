@@ -9,6 +9,7 @@ import {
 import { StrictMode } from "react";
 import { api, configureApi, useLiveUpdates, type Me } from "./api.js";
 import { DeploymentsPage, ServerPage, ServersPage } from "./devops.js";
+import { DesktopGate, type DesktopBridge } from "./desktop.js";
 import { initI18n } from "./i18n.js";
 import { SecurityPage } from "./security.js";
 import {
@@ -70,7 +71,15 @@ const routes = [
     }),
   }),
   createRoute({ getParentRoute: () => rootRoute, path: "/tasks/$id", component: TaskPage }),
-  createRoute({ getParentRoute: () => rootRoute, path: "/approvals", component: ApprovalsPage }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/approvals",
+    component: ApprovalsPage,
+    // `?plan=` : le plan ouvert depuis une notification du desktop.
+    validateSearch: (s: Record<string, unknown>) => ({
+      plan: typeof s.plan === "string" ? s.plan : undefined,
+    }),
+  }),
   createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsRoute }),
   createRoute({ getParentRoute: () => rootRoute, path: "/audit", component: AuditPage }),
   createRoute({ getParentRoute: () => rootRoute, path: "/metrics", component: MetricsPage }),
@@ -92,18 +101,30 @@ declare module "@tanstack/react-router" {
   }
 }
 
-export function JulesApp({ apiBaseUrl, language }: { apiBaseUrl?: string; language?: string }) {
-  configureApi(apiBaseUrl ? { baseUrl: apiBaseUrl } : {});
+export function JulesApp({
+  apiBaseUrl,
+  language,
+  desktop,
+}: {
+  apiBaseUrl?: string;
+  language?: string;
+  /** Shell Tauri (apps/desktop) : connexion par PKCE, jeton porteur, fonctions natives. */
+  desktop?: DesktopBridge;
+}) {
+  if (!desktop) {
+    configureApi(apiBaseUrl ? { baseUrl: apiBaseUrl } : {});
+  }
   initI18n(language);
   applyTheme();
   const client = new QueryClient({
     defaultOptions: { queries: { staleTime: 10_000, refetchOnWindowFocus: true } },
   });
+  const app = (
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
+  );
   return (
-    <StrictMode>
-      <QueryClientProvider client={client}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>
-    </StrictMode>
+    <StrictMode>{desktop ? <DesktopGate bridge={desktop}>{app}</DesktopGate> : app}</StrictMode>
   );
 }

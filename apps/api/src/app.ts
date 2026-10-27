@@ -21,10 +21,19 @@ export type ApiOptions = {
   oauth: OAuthConfig;
   adminLogins: readonly string[];
   sessionTtlHours?: number;
+  /** Origines supplémentaires de la webview desktop (tests de l'interface desktop dans un navigateur). */
+  desktopOrigins?: readonly string[];
   /** Dossier de la SPA construite (apps/web/dist). */
   webDir?: string;
   logger?: FastifyServerOptions["logger"];
 };
+
+/** Origines de la webview Tauri selon l'OS (macOS et Linux : tauri://, Windows : http(s)://tauri.localhost). */
+export const DESKTOP_ORIGINS = new Set([
+  "tauri://localhost",
+  "http://tauri.localhost",
+  "https://tauri.localhost",
+]);
 
 /** CSP stricte : aucun script en ligne, aucun domaine tiers. Le contenu des agents ne peut rien exécuter. */
 export const CSP = [
@@ -54,6 +63,25 @@ export async function buildApi(options: ApiOptions): Promise<FastifyInstance> {
     void reply.header("x-frame-options", "DENY");
     void reply.header("permissions-policy", "camera=(), microphone=(), geolocation=()");
     done(null, payload);
+  });
+
+  // Desktop (Tauri) : la webview a sa propre origine. Requêtes par jeton porteur seulement, jamais de
+  // cookie : autoriser ces origines ne permet aucune requête forgée par un autre site.
+  const desktopOrigins = new Set([...DESKTOP_ORIGINS, ...(options.desktopOrigins ?? [])]);
+  app.addHook("onRequest", (request, reply, done) => {
+    const origin = request.headers.origin;
+    if (origin && desktopOrigins.has(origin) && request.url.startsWith("/v1/")) {
+      void reply.header("access-control-allow-origin", origin);
+      void reply.header("vary", "Origin");
+      void reply.header("access-control-allow-headers", "authorization, content-type, accept");
+      void reply.header("access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE");
+      void reply.header("access-control-max-age", "600");
+      if (request.method === "OPTIONS") {
+        void reply.code(204).send();
+        return;
+      }
+    }
+    done();
   });
 
   app.get("/v1/health", async () => {

@@ -265,27 +265,36 @@ export class ApiError extends Error {
 
 let csrf: string | undefined;
 let base = "";
+let bearer: string | undefined;
 
-/** Le desktop pointe vers son serveur ; le web reste sur la même origine. */
-export function configureApi(options: { baseUrl?: string }) {
+/**
+ * Le web reste sur la même origine, avec le cookie de session et le jeton CSRF. Le desktop pointe
+ * vers son serveur avec un jeton porteur (`jds_…`, rangé dans le trousseau) : ni cookie ni CSRF.
+ */
+export function configureApi(options: { baseUrl?: string; token?: string }) {
   base = options.baseUrl ?? "";
+  bearer = options.token;
+  csrf = undefined;
 }
 
 export async function api<T>(
   path: string,
-  init: { method?: string; body?: unknown } = {},
+  /** `anonymous` : appel sans session (échange du code du desktop), donc sans jeton CSRF. */
+  init: { method?: string; body?: unknown; anonymous?: boolean } = {},
 ): Promise<T> {
   const method = init.method ?? "GET";
   const headers: Record<string, string> = { accept: "application/json" };
   if (init.body !== undefined) headers["content-type"] = "application/json";
-  if (method !== "GET") {
+  if (bearer) {
+    headers.authorization = `Bearer ${bearer}`;
+  } else if (method !== "GET" && !init.anonymous) {
     csrf ??= (await api<Me>("/v1/me")).csrfToken;
     headers["x-jules-csrf"] = csrf;
   }
   const response = await fetch(`${base}${path}`, {
     method,
     headers,
-    credentials: "same-origin",
+    credentials: bearer ? "omit" : "same-origin",
     ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
   });
   const text = await response.text();
@@ -318,13 +327,43 @@ export async function stepUp(purpose: string): Promise<void> {
   await api("/v1/step-up/verify", { method: "POST", body: { response } });
 }
 
+/** Lit un flux SSE par fetch : seule façon d'envoyer le jeton porteur du desktop. */
+async function readEvents(
+  url: string,
+  token: string,
+  signal: AbortSignal,
+  onTask: (data: string) => void,
+) {
+  const response = await fetch(url, {
+    headers: { authorization: `Bearer ${token}`, accept: "text/event-stream" },
+    signal,
+  });
+  const reader = response.body?.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const chunk = await reader?.read();
+    if (!chunk || chunk.done) {
+      return;
+    }
+    buffer += decoder.decode(chunk.value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";
+    for (const event of events) {
+      const data = /^data: (.*)$/m.exec(event)?.[1];
+      if (/^event: task$/m.test(event) && data) {
+        onTask(data);
+      }
+    }
+  }
+}
+
 /** Temps réel : chaque changement de tâche annoncé par l'api rafraîchit ce qui est affiché. */
 export function useLiveUpdates(): void {
   const client = useQueryClient();
   useEffect(() => {
-    const source = new EventSource(`${base}/v1/events`, { withCredentials: true });
-    const onTask = (event: MessageEvent<string>) => {
-      const { id } = JSON.parse(event.data) as { id: string };
+    const onTask = (raw: string) => {
+      const { id } = JSON.parse(raw) as { id: string };
       void client.invalidateQueries({ queryKey: ["tasks"] });
       void client.invalidateQueries({ queryKey: ["task", id] });
       void client.invalidateQueries({ queryKey: ["approvals"] });
@@ -333,9 +372,30 @@ export function useLiveUpdates(): void {
       void client.invalidateQueries({ queryKey: ["servers"] });
       void client.invalidateQueries({ queryKey: ["findings"] });
     };
-    source.addEventListener("task", onTask);
+    if (bearer) {
+      const controller = new AbortController();
+      const token = bearer;
+      // Reconnexion simple : le flux se rouvre tant que la fenêtre vit.
+      const loop = async () => {
+        while (!controller.signal.aborted) {
+          await readEvents(`${base}/v1/events`, token, controller.signal, onTask).catch(
+            () => undefined,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+        }
+      };
+      void loop();
+      return () => {
+        controller.abort();
+      };
+    }
+    const source = new EventSource(`${base}/v1/events`, { withCredentials: true });
+    const listener = (event: MessageEvent<string>) => {
+      onTask(event.data);
+    };
+    source.addEventListener("task", listener);
     return () => {
-      source.removeEventListener("task", onTask);
+      source.removeEventListener("task", listener);
       source.close();
     };
   }, [client]);

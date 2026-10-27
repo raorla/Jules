@@ -791,3 +791,21 @@ export const findings = pgTable(
     index("findings_target_idx").on(t.scope, t.targetId, t.status),
   ],
 );
+
+/**
+ * Connexion du desktop (M9, RFC 8252) : OAuth dans le navigateur du système, retour sur une adresse
+ * de bouclage, puis échange d'un code à usage unique contre une session, avec PKCE (S256).
+ */
+export const desktopLogins = pgTable("desktop_logins", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: orgId(),
+  /** base64url(SHA-256(verifier)), envoyé par l'app avant l'OAuth. */
+  challenge: text("challenge").notNull(),
+  redirectUri: text("redirect_uri").notNull(),
+  clientState: text("client_state").notNull(),
+  codeHash: text("code_hash").unique(),
+  userId: uuid("user_id").references(() => users.id),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  createdAt: createdAt(),
+});
