@@ -1,0 +1,167 @@
+/* Tokens du skill warm-dark-ui (~/.claude/skills/warm-dark-ui/references/tokens.css), copiés tels quels.
+   Les composants demandent un rôle (var(--surface-2)), jamais une valeur. */
+/* ==========================================================================
+   Warm dark UI — design tokens (copy as-is, then extend; never hard-code colours in components)
+
+   Components ask for a ROLE (--surface, --ink-2, --ok…), never a hex value.
+   Which ramp applies is a matter of selector: dark is the default, `.light`
+   on <html> flips the page, `.band--invert` flips one band.
+   ========================================================================== */
+
+:root {
+  /* ---- type: the OS face, no webfont (SF Pro on Apple, Segoe UI on Windows, Roboto on Android) ---- */
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --t-eyebrow: 11px;   /* uppercase labels, 500-600, letter-spacing .08em */
+  --t-micro: 12.5px;
+  --t-small: 13.5px;
+  --t-body: 15px;      /* apps; use 16.5px for reading pages */
+  --t-lede: 19px;
+  --t-value: 22px;     /* KPI figure, 500, -0.02em, tabular-nums */
+  --t-h3: clamp(19px, 1.5vw, 22px);
+  --t-h2: clamp(30px, 4.2vw, 52px);
+  --t-h1: clamp(38px, 6.4vw, 78px); /* 400 weight, -0.035em, two-tone */
+
+  /* ---- radius scale: big soft cards, pills for every control ---- */
+  --r-hero: 40px;     /* hero frame / marketing showcase */
+  --r-card: 24px;     /* cards, panels, dialogs, floating sidebar */
+  --r-tile: 16px;     /* rows and tiles nested inside a card */
+  --r-control: 12px;  /* list items, small inputs */
+  --r-xs: 8px;        /* tooltips, kbd, sidebar items */
+  --pill: 999px;      /* buttons, chips, segmented controls, search */
+
+  --gap: 8px;         /* app shell: cards float 8px apart on the ground */
+  --shell: 1180px;    /* marketing page max width */
+  --gutter: 28px;
+
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-io: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur: 160ms;
+}
+
+/* ---- dark ramp (default) ---- */
+:root,
+:root.light .band--invert {
+  --ground: #1c1a17;     /* page background, warm near-black */
+  --recess: #23211e;     /* inset wells: inputs, segmented tracks, code */
+  --surface: #292723;    /* default card on a page */
+  --surface-2: #2f2c28;  /* app cards / raised panels (cache.mg app) */
+  --surface-3: #34312c;  /* hover on a surface */
+  --panel: rgba(61, 56, 50, 0.5);       /* floating frosted nav / sidebar */
+  --panel-line: rgba(255, 255, 255, 0.12);
+  --rule: #37332f;       /* hairlines, dividers */
+  --rule-2: #272420;     /* faint dividers on --ground */
+  --rule-strong: #48433c;
+
+  --ink: #e8e6e3;        /* primary text, also the "cream" of primary buttons */
+  --ink-2: #bfb9b0;      /* secondary text, ledes */
+  --ink-3: #9c948b;      /* labels, captions, second line of headlines */
+  --cream: #e8e6e3;
+  --on-cream: #1c1a17;
+
+  /* ghost fills: alpha is fine for BACKGROUNDS, never for text */
+  --wash: rgba(232, 230, 227, 0.05);    /* ghost button / chip */
+  --wash-2: rgba(232, 230, 227, 0.08);  /* hover */
+  --wash-3: rgba(232, 230, 227, 0.12);  /* active / selected item */
+
+  --ok: #3ccb7f;         /* success, BUY, up */
+  --crit: #f06b6b;       /* error, SELL, down */
+  --warn: #f0a23c;
+  --info: #6ea8fe;
+  --violet: #c9a7ff;
+  --sand: #453d36;
+  --on-ok: #0e2416;
+
+  --shadow-pop: 0 24px 60px rgba(0, 0, 0, 0.55);
+
+  color-scheme: dark;
+}
+
+/* ---- light ramp ---- */
+:root.light,
+.band--invert {
+  --ground: #f1efec;
+  --recess: #e8e5e1;
+  --surface: #ffffff;
+  --surface-2: #ffffff;
+  --surface-3: #f6f4f1;
+  --panel: rgba(255, 255, 255, 0.7);
+  --panel-line: rgba(24, 24, 24, 0.08);
+  --rule: #d8d5d0;
+  --rule-2: #e5e3df;
+  --rule-strong: #c4bfb8;
+  --ink: #181818;
+  --ink-2: #45413c;
+  --ink-3: #6f6a63;
+  --cream: #181818;      /* primary button inverts: ink pill on light ground */
+  --on-cream: #f1efec;
+  --wash: rgba(24, 24, 24, 0.04);
+  --wash-2: rgba(24, 24, 24, 0.07);
+  --wash-3: rgba(24, 24, 24, 0.1);
+  --ok: #2f7a3a;
+  --crit: #c8203f;
+  --warn: #8a5a00;
+  --info: #2557c4;
+  --violet: #6b46c1;
+  --shadow-pop: 0 24px 60px rgba(40, 30, 20, 0.18);
+  color-scheme: light;
+}
+
+/* ---- semantic tints: derive, don't invent new literals ---- */
+:root {
+  --ok-bg: color-mix(in srgb, var(--ok) 14%, var(--surface));
+  --ok-line: color-mix(in srgb, var(--ok) 32%, var(--rule));
+  --crit-bg: color-mix(in srgb, var(--crit) 14%, var(--surface));
+  --crit-line: color-mix(in srgb, var(--crit) 32%, var(--rule));
+  --warn-bg: color-mix(in srgb, var(--warn) 14%, var(--surface));
+  --warn-line: color-mix(in srgb, var(--warn) 32%, var(--rule));
+  --info-bg: color-mix(in srgb, var(--info) 14%, var(--surface));
+  --violet-bg: color-mix(in srgb, var(--violet) 14%, var(--surface));
+}
+
+/* ---- chart series (categorical, fixed order, colour-blind separated on dark) ---- */
+:root {
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #94a3b8;
+}
+
+/* ---- base ---- */
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font: var(--t-body)/1.5 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+.num { font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--cream); outline-offset: 2px; }
+::selection { background: var(--sand); }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--wash-3); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ---- Tailwind v4: mêmes variables, activé pour Jules (DESIGN.md §1) ---- */
+@theme inline {
+  --color-ground: var(--ground);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-rule: var(--rule);
+  --color-cream: var(--cream);
+  --color-ok: var(--ok);
+  --color-crit: var(--crit);
+  --color-warn: var(--warn);
+  --radius-card: var(--r-card);
+  --radius-tile: var(--r-tile);
+  --font-sans: var(--font);
+}

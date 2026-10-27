@@ -3,3 +3,5 @@ dist/
 coverage/
 packages/db/migrations/meta/
 *.md
+packages/ui/src/styles/tokens.css
+**/__screenshots__/

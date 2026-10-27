@@ -19,6 +19,8 @@ pnpm test
 | `pnpm format` | reformate avec Prettier |
 | `pnpm test` | Vitest dans chaque package |
 | `pnpm --filter @jules/worker test` | les tests d'un seul package |
+| `pnpm --filter @jules/web e2e` | construit la SPA puis lance les tests Playwright (vraie api, vrai PostgreSQL, Chromium) |
+| `pnpm --filter @jules/web dev` et `pnpm --filter @jules/api dev` | l'interface en développement, avec `/v1` relayé vers l'api locale |
 | `pnpm db:generate` | génère une migration depuis `packages/db/src/schema.ts` |
 | `pnpm jules <commande>` | le CLI d'exploitation, sur les sources (`pnpm jules --help`) |
 
@@ -36,6 +38,7 @@ Pendant le développement, les packages exposent leurs sources TypeScript sous l
 - Les invariants de sécurité ont chacun leur test : signature et rejeu des webhooks, chaîne d'audit, chiffrement des secrets, permissions de la GitHub App, `org_id` sur chaque table.
 - `packages/policy`, `packages/workflow` et `packages/risk` (à partir de M1 et M2) exigent **100 % de couverture**. Ce seuil est appliqué par leur config Vitest.
 - Un changement de prompt, de modèle ou de règle passe d'abord par la suite d'evals (à partir de M5).
+- Un changement de `packages/ui` passe la checklist de [DESIGN.md §12](DESIGN.md#12-vérification). Si un écran change volontairement, régénère ses captures (`pnpm --filter @jules/web exec playwright test -c e2e --update-snapshots`), regarde-les, puis relance sans l'option : elles doivent passer telles quelles. Avant la première exécution : `pnpm --filter @jules/web exec playwright install chromium`.
 
 ## Base de données
 

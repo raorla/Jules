@@ -56,6 +56,10 @@ Badges qui restent toujours visibles :
 
 Une couleur n'est jamais seule : chaque puce porte aussi un texte.
 
+Deux ajustements de contraste propres à Jules, mesurés par axe-core (§12), sans toucher aux tokens du skill :
+- **texte des puces** : le ton est mêlé à 20 % d'encre (`color-mix(in srgb, var(--crit) 80%, var(--ink))`). Le rouge pur ne tient que 4,05:1 sur sa teinte posée sur une ligne en retrait ; le mélange éclaircit en sombre, fonce en clair, et tient 4,5:1 dans les deux thèmes ;
+- **texte secondaire sur `--recess`** (méta des lignes, identifiants de gates, contrôles segmentés) : le rôle `--ink-recess`, égal à `--ink-3` en sombre et à `--ink-2` en clair, où `--ink-3` ne tient que 4,28:1 sur `--recess`.
+
 ## 5. App shell
 
 C'est l'app shell du skill (§4 de `components.md`) : une barre latérale flottante et givrée, et une colonne de cartes à 8 px d'écart.
@@ -142,7 +146,7 @@ Ils sont construits sur les recettes du skill.
 
 À chaque PR qui touche `packages/ui` :
 - la checklist du skill (fond chaud, aucune opacité sur le texte, pilules, cartes sans bordure, icônes dimensionnées, chiffres tabulaires, tenue à 380 px) ;
-- des captures Playwright à 1280 px et 390 px, en thème sombre et clair, comparées aux captures de référence ;
+- des captures Playwright à 1280 px et 390 px, en thème sombre et clair, comparées aux captures de référence (`apps/web/e2e/__screenshots__`, régénérées volontairement avec `--update-snapshots` quand un écran change) ;
 - un contrôle automatique des contrastes (axe-core) ;
 - les vérifications propres à Jules :
   - l'environnement est visible sur chaque action serveur ;

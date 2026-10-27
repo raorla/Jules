@@ -9,7 +9,7 @@
   "scripts": {
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
-    "lint": "eslint . && prettier --check .",
+    "lint": "NODE_OPTIONS=--max-old-space-size=8192 eslint . && prettier --check .",
     "format": "prettier --write .",
     "test": "turbo run test",
     "db:generate": "pnpm --filter @jules/db generate",

@@ -14,9 +14,12 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm fetch
 COPY . .
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --offline --frozen-lockfile
 RUN pnpm turbo run build \
-      --filter=@jules/gateway... --filter=@jules/worker... --filter=@jules/agent-runner... --filter=@jules/sandbox
+      --filter=@jules/gateway... --filter=@jules/worker... --filter=@jules/agent-runner... --filter=@jules/sandbox \
+      --filter=@jules/api... --filter=@jules/web
 RUN pnpm --filter=@jules/gateway deploy --prod --legacy /out/gateway \
  && pnpm --filter=@jules/worker deploy --prod --legacy /out/worker \
+ && pnpm --filter=@jules/api deploy --prod --legacy /out/api \
+ && cp -r apps/web/dist /out/api/web \
  && pnpm --filter=@jules/agent-runner deploy --prod --legacy /out/agent-runner \
  && cp -r prompts /out/worker/prompts
 
@@ -28,6 +31,14 @@ FROM runtime AS gateway
 COPY --from=build --chown=root:root /out/gateway .
 USER node
 EXPOSE 3000
+CMD ["node", "dist/main.js"]
+
+# api : REST /v1, SSE et la SPA construite (apps/web/dist), servie avec une CSP stricte.
+FROM runtime AS api
+COPY --from=build --chown=root:root /out/api .
+ENV JULES_WEB_DIR=/app/web
+USER node
+EXPOSE 3001
 CMD ["node", "dist/main.js"]
 
 FROM runtime AS worker

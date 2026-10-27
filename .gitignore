@@ -9,3 +9,5 @@ coverage/
 deploy/secrets/
 deploy/backup.env
 *.pem
+test-results/
+playwright-report/

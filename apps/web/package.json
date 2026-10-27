@@ -1,0 +1,36 @@
+{
+  "name": "@jules/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "typecheck": "tsc -p tsconfig.json && tsc -p e2e/tsconfig.json",
+    "test": "vitest run --passWithNoTests --dir src",
+    "e2e": "vite build && playwright test -c e2e"
+  },
+  "dependencies": {
+    "@jules/ui": "workspace:*",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@jules/api": "workspace:*",
+    "@jules/db": "workspace:*",
+    "@playwright/test": "1.64.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/libsodium-wrappers": "0.8.2",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "libsodium-wrappers": "0.8.4",
+    "tailwindcss": "4.3.3",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "vite": "8.3.4",
+    "vitest": "5.0.5"
+  }
+}

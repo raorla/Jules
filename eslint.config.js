@@ -2,7 +2,15 @@ import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["**/dist/**", "**/coverage/**", "**/migrations/**"] },
+  {
+    ignores: [
+      "**/dist/**",
+      "**/coverage/**",
+      "**/migrations/**",
+      "**/test-results/**",
+      "**/playwright-report/**",
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   {
@@ -18,7 +26,14 @@ export default tseslint.config(
     },
   },
   {
-    files: ["**/test/**/*.ts", "**/*.test.ts"],
+    // React : `onClick={() => setOpen(true)}` est l'écriture idiomatique d'un gestionnaire.
+    files: ["**/*.tsx"],
+    rules: {
+      "@typescript-eslint/no-confusing-void-expression": ["error", { ignoreArrowShorthand: true }],
+    },
+  },
+  {
+    files: ["**/test/**/*.ts", "**/*.test.ts", "**/e2e/**/*.ts"],
     rules: { "@typescript-eslint/no-non-null-assertion": "off" },
   },
   {

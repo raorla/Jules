@@ -35,6 +35,24 @@ jobs:
       # Testcontainers lance un vrai PostgreSQL : Docker est disponible sur les runners Ubuntu.
       - run: pnpm test
 
+  # Parcours Playwright de l'interface (ROADMAP M6) : vraie api, vrai PostgreSQL, Chromium.
+  # Les captures de référence dépendent des polices du système : la CI vérifie les parcours, les
+  # contrastes (axe) et la tenue à 390 px ; la comparaison pixel se fait sur la machine de référence.
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @jules/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @jules/web exec vite build
+      - run: pnpm --filter @jules/web exec playwright test -c e2e --ignore-snapshots
+
   docker:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -42,6 +60,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker build -f deploy/Dockerfile --target gateway -t jules-gateway .
       - run: docker build -f deploy/Dockerfile --target worker -t jules-worker .
+      - run: docker build -f deploy/Dockerfile --target api -t jules-api .
 
   osv-scanner:
     permissions:

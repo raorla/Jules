@@ -7,9 +7,11 @@ import {
   installations,
   memberships,
   repos,
+  runs,
   secretSubmissions,
   stops,
   tasks,
+  toolCalls,
   users,
   workerKeys,
 } from "@jules/db";
@@ -252,6 +254,42 @@ describe("rôles et commandes", () => {
         .json<{ id: string }[]>()
         .some((x) => x.id === task.id),
     ).toBe(true);
+  });
+
+  it("donne la transcription d'une exécution, telle que le worker l'a masquée", async () => {
+    await addMember("lea", "viewer");
+    const viewer = (await login("lea"))!;
+    const { task } = await seedRepoAndTask();
+    const [run] = await t.db
+      .insert(runs)
+      .values({
+        orgId: DEFAULT_ORG_ID,
+        taskId: task.id,
+        role: "developer",
+        model: "claude-opus-5-5",
+        promptVersion: "developer/v1",
+        tokenHash: `h-${task.id}`,
+        tokenExpiresAt: new Date(),
+        budgetUsd: "1",
+      })
+      .returning();
+    await t.db.insert(toolCalls).values({
+      orgId: DEFAULT_ORG_ID,
+      runId: run!.id,
+      capability: "post_update",
+      input: { message: "clé [masqué]" },
+      effect: "allow",
+      ruleId: "role.allowed",
+      reason: "autorisé",
+      output: "ok",
+      durationMs: 3,
+    });
+    const transcript = await call(viewer, "GET", `/v1/runs/${run!.id}/tool-calls`);
+    expect(transcript.statusCode).toBe(200);
+    expect(transcript.json()).toMatchObject([
+      { capability: "post_update", effect: "allow", input: { message: "clé [masqué]" } },
+    ]);
+    expect((await call(viewer, "GET", "/v1/runs/pas-un-uuid/tool-calls")).statusCode).toBe(400);
   });
 });
 

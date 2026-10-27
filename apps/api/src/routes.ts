@@ -22,6 +22,7 @@ import {
   sql,
   stops,
   tasks,
+  toolCalls,
   users,
   workerKeys,
   type Db,
@@ -172,12 +173,45 @@ export function registerRoutes(
           .orderBy(asc(auditLog.seq)),
       ]);
       return {
-        task: { ...row.task, repo: row.repo, costUsd: Number(row.task.costUsd) },
+        task: {
+          ...row.task,
+          repo: row.repo,
+          costUsd: Number(row.task.costUsd),
+          budgetUsd: row.task.budgetUsd === null ? null : Number(row.task.budgetUsd),
+        },
         artifacts: taskArtifacts,
         runs: taskRuns.map((r) => ({ ...r, costUsd: Number(r.costUsd) })),
         commands: taskCommands,
         timeline,
       };
+    },
+  );
+
+  // Transcription d'une exécution : les appels d'outils, masqués par le worker à l'écriture.
+  app.get<{ Params: { id: string } }>(
+    "/v1/runs/:id/tool-calls",
+    { preHandler: g("viewer") },
+    async (request, reply) => {
+      const id = z.uuid().safeParse(request.params.id);
+      if (!id.success) {
+        return reply.code(400).send({ error: "identifiant invalide" });
+      }
+      return db
+        .select({
+          id: toolCalls.id,
+          capability: toolCalls.capability,
+          input: toolCalls.input,
+          effect: toolCalls.effect,
+          ruleId: toolCalls.ruleId,
+          reason: toolCalls.reason,
+          output: toolCalls.output,
+          durationMs: toolCalls.durationMs,
+          createdAt: toolCalls.createdAt,
+        })
+        .from(toolCalls)
+        .where(eq(toolCalls.runId, id.data))
+        .orderBy(asc(toolCalls.createdAt))
+        .limit(500);
     },
   );
 

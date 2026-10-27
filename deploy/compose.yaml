@@ -50,6 +50,22 @@ services:
     networks: [db, edge]
     <<: *hardening
 
+  # Interface web et api (ARCHITECTURE.md §4.2) : aucun secret d'exécution, seulement l'OAuth GitHub.
+  api:
+    image: jules-api:${JULES_VERSION:-local}
+    build: { context: .., dockerfile: deploy/Dockerfile, target: api }
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      JULES_PUBLIC_URL: https://${JULES_DOMAIN:?JULES_DOMAIN est requis}
+      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:?GITHUB_OAUTH_CLIENT_ID est requis}
+      GITHUB_OAUTH_CLIENT_SECRET_FILE: /run/secrets/github_oauth_client_secret
+      JULES_ADMIN_LOGINS: ${JULES_ADMIN_LOGINS:-}
+    secrets: [database_url, github_oauth_client_secret]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [db, edge]
+    <<: *hardening
+
   worker:
     image: jules-worker:${JULES_VERSION:-local}
     environment:
@@ -137,5 +153,6 @@ secrets:
   postgres_password: { file: ./secrets/postgres_password }
   database_url: { file: ./secrets/database_url }
   github_webhook_secret: { file: ./secrets/github_webhook_secret }
+  github_oauth_client_secret: { file: ./secrets/github_oauth_client_secret }
   jules_master_key: { file: ./secrets/jules_master_key }
   restic_password: { file: ./secrets/restic_password }

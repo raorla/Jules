@@ -20,6 +20,8 @@ new postgres_password "openssl rand -hex 32"
 new github_webhook_secret "openssl rand -hex 32"
 new restic_password "openssl rand -base64 48"
 new jules_master_key "openssl rand -base64 32"
+# Donné par GitHub (README §3) : le fichier est créé vide, à remplir avec le client secret de l'App.
+new github_oauth_client_secret "true"
 printf 'postgres://jules:%s@postgres:5432/jules' "$(cat secrets/postgres_password)" > secrets/database_url
 
 [ -f .env ] || cp .env.example .env

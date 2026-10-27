@@ -66,6 +66,11 @@ Ensuite :
 1. note l'**App ID** dans `deploy/.env` (`GITHUB_APP_ID=`) ;
 2. génère une **clé privée** (fichier `.pem`) ;
 3. choisis la mention qui déclenche Jules (`JULES_MENTION` dans `deploy/.env`). `@jules` notifie aussi le compte GitHub public du même nom : préfère le nom de ton App, par exemple `@jules-mtonga`.
+4. pour la connexion à l'interface web, la même App sert de fournisseur OAuth :
+   - *Callback URL* : `https://<domaine>/v1/auth/github/callback` ;
+   - note le **Client ID** dans `deploy/.env` (`GITHUB_OAUTH_CLIENT_ID=`) ;
+   - génère un **client secret** et range-le dans `deploy/secrets/github_oauth_client_secret` (mode 600) ;
+   - mets ton login GitHub dans `JULES_ADMIN_LOGINS` (séparés par des virgules). Les autres personnes sont ajoutées ensuite comme membres, avec un rôle Jules.
 
 ## 4. Enregistrer les clés, chiffrées
 
@@ -90,7 +95,9 @@ docker compose --profile tunnel up -d    # ou avec Cloudflare Tunnel (CLOUDFLARE
 docker compose logs -f worker
 ```
 
-Seule la route `/webhooks/github` est exposée. Au démarrage, le worker redemande à GitHub les webhooks des trois derniers jours qui ne sont pas en base.
+Le webhook va au gateway, l'interface web et `/v1` vont à l'api : rien d'autre n'est exposé. Au démarrage, le worker redemande à GitHub les webhooks des trois derniers jours qui ne sont pas en base.
+
+Première connexion : ouvre `https://<domaine>`, connecte-toi avec GitHub, puis ajoute une **passkey** dans *Réglages*. Sans passkey, aucune action sensible n'est possible depuis l'interface (relever l'autonomie, écrire un secret, lever l'arrêt d'urgence).
 
 ## 6. Essai sur le repo bac à sable
 

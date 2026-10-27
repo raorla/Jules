@@ -193,6 +193,7 @@ describe("broker : outils", () => {
     const [logged] = await t.db.select().from(toolCalls).where(eq(toolCalls.runId, runId));
     expect(JSON.stringify(logged?.input)).not.toContain(API_KEY);
     expect(JSON.stringify(logged?.input)).not.toContain("ghp_");
+    expect(logged?.output ?? "").not.toContain(API_KEY);
   });
 
   it("refuse tout pendant l'arrêt d'urgence", async () => {

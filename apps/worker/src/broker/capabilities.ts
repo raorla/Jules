@@ -236,7 +236,8 @@ export async function handleCapability(
         effect: outcome.decision.effect,
         ruleId: outcome.decision.ruleId,
         reason: outcome.decision.reason,
-        output: truncate(outcome.text, 2_000),
+        // La sortie est montrée dans l'interface (transcription) : masquée comme l'entrée.
+        output: truncate(masker.mask(outcome.text), 2_000),
         durationMs: Date.now() - startedAt,
       })
       .returning({ id: toolCalls.id });

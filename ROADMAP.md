@@ -258,6 +258,8 @@ Après M5, le noyau est déployé en L1 sur 2 ou 3 repos de `MTONGASWARM`. Chaqu
 - Parcours principaux couverts par des tests Playwright.
 - La checklist de [DESIGN.md §12](DESIGN.md#12-vérification) passe : captures à 1280 et 390 px, dans les deux thèmes, et contrastes vérifiés.
 
+> Statut (27/10/2026) : code livré. Les critères de la DoD sont des tests automatisés : ceux de l'api (CSRF, secret scellé illisible, passkey exigée, `member` sans droit GitHub refusé) en Vitest sur un vrai PostgreSQL ; l'approbation web puis GitHub, refusée la seconde fois, dans le worker ; et 27 tests Playwright sur la vraie api et la SPA construite (parcours principaux, XSS, passkey par l'authentificateur virtuel de Chromium, secret jamais réaffiché, arrêt d'urgence, 16 captures de référence, axe-core sans violation, aucun défilement horizontal à 390 px). La CI rejoue ces parcours sans la comparaison pixel, qui dépend des polices du système : elle se fait sur la machine de référence. Restent, sur le vrai serveur : la connexion OAuth avec la GitHub App réelle et une passkey matérielle.
+
 ### M7 — Agent DevOps (L)
 
 **Livrables**

@@ -1,9 +1,10 @@
-# Seule la route des webhooks est exposée ; tout le reste répond 404.
+# Le webhook GitHub va au gateway ; l'interface web et `/v1` vont à l'api. Rien d'autre n'est exposé :
+# ni PostgreSQL, ni le worker, ni le broker.
 {$JULES_DOMAIN} {
 	handle /webhooks/github {
 		reverse_proxy gateway:3000
 	}
 	handle {
-		respond 404
+		reverse_proxy api:3001
 	}
 }
