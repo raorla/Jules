@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { designSchema, specSchema, triageSchema } from "./phases.js";
+import { designSchema, reviewSchema, specSchema, triageSchema } from "./phases.js";
 
 // Entrées des outils `jules` (ARCHITECTURE.md §7). Le serveur MCP du sandbox les déclare au modèle,
 // et le broker les revalide : le sandbox n'est pas digne de confiance.
@@ -14,6 +14,7 @@ export const capabilityInputs = {
   submit_triage: triageSchema,
   submit_spec: specSchema,
   submit_design: designSchema,
+  submit_review: reviewSchema,
   submit_build: z.object({
     summary: line(4000).describe("Ce qui a été fait, pour la description de la PR."),
     commitMessage: z
@@ -67,6 +68,8 @@ export const capabilityDescriptions: Record<CapabilityName, string> = {
     "Soumet la spec : problème, critères d'acceptation AC-n (Étant donné / Quand / Alors), hors périmètre, hypothèses, reproduction pour un bug. Une seule fois.",
   submit_design:
     "Soumet la conception : approche, étapes, fichiers, plan de test (chaque AC couvert), retour arrière, migration et ADR s'il y a lieu. Une seule fois.",
+  submit_review:
+    "Soumet la review : verdict (approve, request_changes, escalate), résumé, statut de chaque critère AC-n (met, partial, missing) et findings (blocker, major, minor, nit) avec fichier et ligne. Une seule fois.",
   submit_build:
     "Termine le développement : résumé du travail, message de commit Conventional Commits, tests ajoutés. Une seule fois.",
   merge_pull_request: "Merge une pull request.",

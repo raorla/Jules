@@ -123,3 +123,76 @@ export function checkDesign(design: Design, spec: Spec | undefined): string[] {
   );
   return problems;
 }
+
+export const reviewSchema = z
+  .object({
+    verdict: z.enum(["approve", "request_changes", "escalate"]),
+    summary: text(4000),
+    acVerdicts: z
+      .array(
+        z.object({
+          ac: acId,
+          status: z.enum(["met", "partial", "missing"]),
+          note: z.string().trim().max(1000).default(""),
+        }),
+      )
+      .max(30),
+    findings: z
+      .array(
+        z.object({
+          severity: z.enum(["blocker", "major", "minor", "nit"]),
+          file: text(300),
+          line: z.number().int().positive().optional(),
+          ac: acId.optional(),
+          comment: text(2000),
+        }),
+      )
+      .max(50)
+      .default([]),
+  })
+  .superRefine((review, ctx) => {
+    const unmet = review.acVerdicts.filter((a) => a.status !== "met").length;
+    if (review.verdict === "approve" && unmet > 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["verdict"],
+        message: `verdict approve impossible : ${unmet} critère(s) non satisfait(s)`,
+      });
+    }
+  });
+export type Review = z.infer<typeof reviewSchema>;
+
+/**
+ * G6 (WORKFLOW.md §5) : la review passe si le verdict est `approve`, que chaque critère de la spec
+ * est `met` et qu'il ne reste aucun finding `blocker` ou `major`. Le verdict de l'agent seul ne suffit pas.
+ */
+export function gateG6(
+  review: Review,
+  spec: Spec | undefined,
+): { outcome: "approved" | "changes_requested" | "escalated"; problems: string[] } {
+  if (review.verdict === "escalate") {
+    return { outcome: "escalated", problems: ["le reviewer escalade à un humain"] };
+  }
+  const problems: string[] = [];
+  for (const id of spec?.acceptanceCriteria.map((c) => c.id) ?? []) {
+    const verdict = review.acVerdicts.find((a) => a.ac === id);
+    if (!verdict) {
+      problems.push(`${id} non évalué par le reviewer`);
+    } else if (verdict.status !== "met") {
+      problems.push(
+        `${id} ${verdict.status === "missing" ? "non implémenté" : "partiellement implémenté"}${verdict.note ? ` : ${verdict.note}` : ""}`,
+      );
+    }
+  }
+  for (const finding of review.findings.filter(
+    (f) => f.severity === "blocker" || f.severity === "major",
+  )) {
+    problems.push(
+      `${finding.severity} ${finding.file}${finding.line ? `:${finding.line}` : ""} : ${finding.comment}`,
+    );
+  }
+  if (review.verdict === "request_changes" && problems.length === 0) {
+    problems.push("changements demandés par le reviewer");
+  }
+  return { outcome: problems.length === 0 ? "approved" : "changes_requested", problems };
+}

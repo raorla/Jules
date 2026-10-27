@@ -98,7 +98,24 @@ Seule la route `/webhooks/github` est exposée. Au démarrage, le worker redeman
 2. Dans une issue, commente `@jules ajoute un endpoint /healthz` (avec ta mention).
 3. Jules répond par un commentaire de statut « reçue ». Il faut un droit `write` sur le repo : le commentaire d'un simple lecteur est ignoré et journalisé.
 
-## 7. Sauvegardes
+## 7. Mettre un repo sous Jules
+
+Dans une issue du repo, une personne avec le droit `maintain` commente `@jules setup` (avec ta mention). Jules ouvre une PR qui contient trois choses :
+- une `.jules/config.yml` adaptée à la stack détectée (Node, Python, Go ou Rust) ;
+- un `AGENTS.md`, s'il n'en existe ni ni `CLAUDE.md` ;
+- des CODEOWNERS pour les chemins sensibles.
+
+La PR liste aussi les règles de branche qui manquent. Relis les commandes avant de merger : Jules lit sa config sur la branche par défaut.
+
+Règles recommandées sur la branche par défaut (*Settings → Rules → Rulesets*) ([ARCHITECTURE.md §12](../ARCHITECTURE.md#rulesets-recommandés-sur-chaque-repo)) :
+- **Require a pull request before merging**, avec au moins une approbation et **Require review from Code Owners** ;
+- **Require status checks to pass** : `Jules / gates`, `Jules / review`, et la CI du projet ;
+- **Block force pushes** ;
+- Jules ne figure pas dans la liste de bypass.
+
+La review de Jules est publiée en COMMENT : elle ne compte jamais comme une approbation.
+
+## 8. Sauvegardes
 
 1. Renseigne le dépôt restic hors de l'hôte dans `deploy/backup.env` (S3, B2, SFTP…).
 2. Active la sauvegarde quotidienne :
@@ -117,7 +134,7 @@ Seule la route `/webhooks/github` est exposée. Au démarrage, le worker redeman
 
    Le script restaure la dernière sauvegarde dans une base jetable. Il vérifie ensuite les migrations, la chaîne d'audit et le déchiffrement de chaque secret, puis supprime la base.
 
-## 8. Opérations courantes
+## 9. Opérations courantes
 
 Toutes les commandes passent par le CLI du worker : `docker compose run --rm worker node dist/cli.js <commande>`.
 

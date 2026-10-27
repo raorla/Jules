@@ -15,10 +15,28 @@ import {
   type Db,
   type DbOrTx,
 } from "@jules/db";
-import { pushBranch, remoteBranchSha, type RepoRef } from "@jules/forge";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { git, pushBranch, remoteBranchSha, type RepoRef } from "@jules/forge";
+import {
+  detectStack,
+  missingRules,
+  renderAgentsMd,
+  renderCodeowners,
+  renderRepoConfig,
+  type RepoFiles,
+} from "./setup.js";
 import { z } from "zod";
 import type { WorkerDeps } from "./deps.js";
+import { gateG6, reviewSchema, type Review, type Spec } from "@jules/artifacts";
 import { renderStatusComment, statusMarker, type StatusView } from "./messages.js";
+import {
+  renderPullRequestBody,
+  renderReviewBody,
+  type PullRequestContext,
+} from "./pull-request.js";
 
 // Effets (ARCHITECTURE.md §17) : une transition écrit l'effet dans `outbox`, dans sa transaction ;
 // le worker l'exécute ensuite. Chaque exécuteur est idempotent : un effet rejoué après un crash
@@ -36,6 +54,18 @@ const effectPayloads = {
     sha: z.string(),
   }),
   "github.pull_request": z.object({ taskId: z.uuid() }),
+  "github.review": z.object({ taskId: z.uuid(), reviewVersion: z.number().int().positive() }),
+  "github.pr_ready": z.object({ taskId: z.uuid() }),
+  "github.setup": z.object({
+    installationId: z.number(),
+    owner: z.string(),
+    repo: z.string(),
+    defaultBranch: z.string(),
+    issueNumber: z.number(),
+    eventId: z.uuid(),
+    requester: z.string().regex(/^[\w-]+$/),
+    language: z.enum(["fr", "en"]),
+  }),
   "github.check_run": z.object({
     taskId: z.uuid(),
     sha: z.string(),
@@ -258,47 +288,198 @@ const executors: Record<EffectKind, Executor> = {
     if (!task.branch) {
       throw new Error(`tâche ${taskId} sans branche`);
     }
-    // Une PR déjà ouverte pour cette branche est retrouvée au lieu d'être recréée (§17).
+    const body = renderPullRequestBody(await pullRequestContext(db, task, issueNumber));
+    const build = (await latestArtifact(db, taskId, "build")) as
+      { commitMessage?: string } | undefined;
+    // Une PR déjà ouverte pour cette branche est retrouvée au lieu d'être recréée (§17) ; sa
+    // description, avec la matrice de traçabilité, est remise à jour à chaque étape.
+    const existing = await github.findPullRequest(ref, task.branch);
     const pr =
-      (await github.findPullRequest(ref, task.branch)) ??
+      existing ??
       (await github.createPullRequest(ref, {
         head: task.branch,
         base: repo.defaultBranch ?? "main",
         draft: true,
-        ...pullRequestText(
-          task,
-          issueNumber,
-          (await latestArtifact(db, taskId, "build")) as BuildContent | undefined,
-        ),
+        title: build?.commitMessage ?? task.title,
+        body,
       }));
+    if (existing) {
+      await github.updatePullRequest(ref, pr.number, { body });
+    }
     await db.update(tasks).set({ prNumber: pr.number, prUrl: pr.url }).where(eq(tasks.id, taskId));
-    return { number: pr.number, url: pr.url };
+    return { number: pr.number, url: pr.url, operation: existing ? "updated" : "created" };
+  },
+
+  "github.review": async ({ db, github }, row) => {
+    const p = effectPayloads["github.review"].parse(row.payload);
+    const { task, ref } = await loadTask(db, p.taskId);
+    if (!task.prNumber || !task.headSha) {
+      throw new Error(`tâche ${p.taskId} sans PR`);
+    }
+    const [reviewRow] = await db
+      .select()
+      .from(artifacts)
+      .where(
+        and(
+          eq(artifacts.taskId, p.taskId),
+          eq(artifacts.kind, "review"),
+          eq(artifacts.version, p.reviewVersion),
+        ),
+      );
+    if (!reviewRow) {
+      throw new Error(`review v${p.reviewVersion} introuvable`);
+    }
+    const review = reviewSchema.parse(reviewRow.content);
+    const spec = (await latestArtifact(db, p.taskId, "spec")) as Spec | undefined;
+    const marker = `<!-- jules:review task=${p.taskId} v=${p.reviewVersion} -->`;
+    const existing = await github.findReview(ref, task.prNumber, marker);
+    if (existing) {
+      return { reviewId: existing.id, operation: "found" };
+    }
+    const created = await github.createReview(ref, task.prNumber, {
+      commitId: task.headSha,
+      body: renderReviewBody(review, marker, gateG6(review, spec).problems),
+      comments: review.findings
+        .filter((f): f is typeof f & { line: number } => f.line !== undefined)
+        .map((f) => ({ path: f.file, line: f.line, body: `**${f.severity}** : ${f.comment}` })),
+    });
+    return { reviewId: created.id, operation: "created" };
+  },
+
+  "github.setup": async ({ github }, row) => {
+    const p = effectPayloads["github.setup"].parse(row.payload);
+    const ref = { installationId: p.installationId, owner: p.owner, repo: p.repo };
+    const branch = "jules/setup";
+    const reply = async (body: string) => {
+      const marker = `<!-- jules:reply event=${p.eventId} -->`;
+      if (!(await github.findIssueComment(ref, p.issueNumber, marker))) {
+        await github.createIssueComment(ref, p.issueNumber, `${marker}\n${body}`);
+      }
+    };
+    const existing = await github.findPullRequest(ref, branch);
+    if (existing) {
+      await reply(`Jules : l'onboarding est déjà proposé dans ${existing.url}.`);
+      return { number: existing.number, operation: "found" };
+    }
+    const token = await github.getRepoToken(ref, { contents: "write" });
+    const url = github.cloneUrl(ref);
+    const dir = await mkdtemp(join(tmpdir(), "jules-setup-"));
+    try {
+      // Clone de la branche par défaut seulement : aucun code d'agent ici, rien n'est exécuté du repo.
+      await git(["clone", "--quiet", "--branch", p.defaultBranch, url, dir], { token });
+      const files: RepoFiles = {
+        has: (path) => existsSync(join(dir, path)),
+        read: (path) =>
+          existsSync(join(dir, path)) ? readFileSync(join(dir, path), "utf8") : undefined,
+      };
+      const stack = detectStack(files);
+      const added: string[] = [];
+      const add = async (path: string, content: string) => {
+        await mkdir(dirname(join(dir, path)), { recursive: true });
+        await writeFile(join(dir, path), content);
+        added.push(path);
+      };
+      if (!files.has(".jules/config.yml"))
+        await add(".jules/config.yml", renderRepoConfig(stack, p.language));
+      if (!files.has("AGENTS.md") && !files.has("CLAUDE.md"))
+        await add("AGENTS.md", renderAgentsMd(stack));
+      if (!["CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"].some((f) => files.has(f)))
+        await add(".github/CODEOWNERS", renderCodeowners(p.requester));
+      const missing = missingRules(await github.getBranchRules(ref, p.defaultBranch));
+      if (added.length === 0) {
+        await reply(
+          `Jules : ce repo est déjà configuré.${missing.length ? ` Règles de branche à ajouter sur \`${p.defaultBranch}\` : ${missing.join(" ; ")}.` : ""}`,
+        );
+        return { operation: "already_configured", missing };
+      }
+      const author = [
+        "-c",
+        "user.name=Jules",
+        "-c",
+        "user.email=jules@users.noreply.github.com",
+        "-c",
+        "commit.gpgsign=false",
+      ];
+      await git(["checkout", "-q", "-b", branch], { cwd: dir });
+      await git(["add", "--", ...added], { cwd: dir });
+      await git(
+        [...author, "commit", "-q", "-m", "chore(jules): onboarding du repo\n\nJules-Task: setup"],
+        { cwd: dir },
+      );
+      await git(
+        ["push", "--quiet", "--no-verify", url, `refs/heads/${branch}:refs/heads/${branch}`],
+        { cwd: dir, token },
+      );
+      const pr = await github.createPullRequest(ref, {
+        head: branch,
+        base: p.defaultBranch,
+        draft: false,
+        title: "chore(jules): onboarding du repo",
+        body: [
+          `Onboarding de Jules, demandé par @${p.requester} (#${p.issueNumber}).`,
+          "",
+          `**Stack détectée** : ${stack?.name ?? "aucune ; complète les commandes à la main"}.`,
+          "",
+          "### Fichiers proposés",
+          ...added.map((f) => `- \`${f}\``),
+          "",
+          "Ces fichiers sont des chemins protégés : relis les commandes et les chemins de risque avant de merger. Jules lit toujours sa config sur la branche par défaut.",
+          "",
+          `### Règles de branche sur \`${p.defaultBranch}\``,
+          ...(missing.length
+            ? missing.map((m) => `- [ ] ${m}`)
+            : ["Toutes les règles recommandées sont actives."]),
+          "",
+          "<sub>Préparée par Jules. Elle attend la review d'un humain : Jules ne merge jamais.</sub>",
+        ].join("\n"),
+      });
+      await reply(`Jules : onboarding proposé dans ${pr.url}.`);
+      return { number: pr.number, operation: "created", added, missing };
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+
+  "github.pr_ready": async ({ db, github }, row) => {
+    const { taskId } = effectPayloads["github.pr_ready"].parse(row.payload);
+    const { task, ref } = await loadTask(db, taskId);
+    const pr = task.branch ? await github.findPullRequest(ref, task.branch) : undefined;
+    if (!pr) {
+      throw new Error(`PR de la tâche ${taskId} introuvable`);
+    }
+    // En L2, la PR passe en « ready » : GitHub demande alors les reviewers CODEOWNERS.
+    await github.markReadyForReview(ref, pr);
+    return { number: pr.number, wasDraft: pr.draft };
   },
 };
 
-type BuildContent = { summary: string; commitMessage: string; testsAdded: string[] };
-
-function pullRequestText(
-  task: { id: string; title: string },
+async function pullRequestContext(
+  db: Db,
+  task: typeof tasks.$inferSelect,
   issueNumber: number,
-  build: BuildContent | undefined,
-) {
-  const tests = build?.testsAdded.length
-    ? build.testsAdded.map((t) => `- \`${t}\``).join("\n")
-    : "_aucun déclaré_";
+): Promise<PullRequestContext> {
+  const rows = await db
+    .select()
+    .from(artifacts)
+    .where(eq(artifacts.taskId, task.id))
+    .orderBy(asc(artifacts.version));
+  const last = (kind: string) => rows.filter((r) => r.kind === kind).at(-1);
+  const prompts = await db
+    .selectDistinct({ promptVersion: runs.promptVersion })
+    .from(runs)
+    .where(eq(runs.taskId, task.id));
   return {
-    title: build?.commitMessage ?? task.title,
-    body: [
-      build?.summary ?? "",
-      "",
-      "### Tests ajoutés",
-      tests,
-      "",
-      "---",
-      `Tâche Jules \`${task.id.slice(0, 8)}\` · issue #${issueNumber}`,
-      "",
-      "<sub>Préparée par Jules. Elle attend la review d'un humain : Jules ne merge jamais.</sub>",
-    ].join("\n"),
+    task,
+    issueNumber,
+    spec: last("spec")?.content as Spec | undefined,
+    build: last("build")?.content as PullRequestContext["build"],
+    gates: last("gate_report")?.content as PullRequestContext["gates"],
+    review: last("review")?.content as Review | undefined,
+    versions: {
+      ...(last("spec") ? { spec: last("spec")?.version } : {}),
+      ...(last("design") ? { design: last("design")?.version } : {}),
+      prompts: prompts.map((p) => p.promptVersion.replace("/", "@")).sort(),
+    },
   };
 }
 

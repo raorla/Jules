@@ -50,11 +50,38 @@ export interface GitHubApp {
   getRepoToken(ref: RepoRef, permissions: Permissions): Promise<string>;
   findPullRequest(ref: RepoRef, head: string): Promise<PullRequest | undefined>;
   createPullRequest(ref: RepoRef, pr: NewPullRequest): Promise<PullRequest>;
+  updatePullRequest(
+    ref: RepoRef,
+    number: number,
+    update: { title?: string; body?: string },
+  ): Promise<void>;
+  /** Passe une PR brouillon en « ready for review » ; GitHub demande alors les reviewers CODEOWNERS. */
+  markReadyForReview(ref: RepoRef, pr: PullRequest): Promise<void>;
+  /** Review de type COMMENT (jamais APPROVE) : l'avis de Jules ne compte pas dans les approbations requises. */
+  createReview(ref: RepoRef, number: number, review: NewReview): Promise<{ id: number }>;
+  /** Review de l'App qui contient `marker`, si elle existe. */
+  findReview(ref: RepoRef, number: number, marker: string): Promise<{ id: number } | undefined>;
+  listReviewComments(
+    ref: RepoRef,
+    number: number,
+    reviewId: number,
+  ): Promise<{ path: string; line: number | null; body: string }[]>;
+  /** Règles actives sur une branche (rulesets) ; lisibles avec la seule permission Metadata. */
+  getBranchRules(
+    ref: RepoRef,
+    branch: string,
+  ): Promise<{ type: string; parameters?: Record<string, unknown> }[]>;
   /** Check runs d'un commit (la CI du projet, et ceux de Jules). */
   listCheckRuns(ref: RepoRef, sha: string): Promise<CheckRun[]>;
   /** Crée ou met à jour le check run `name` de ce commit. */
   upsertCheckRun(ref: RepoRef, run: CheckRunInput): Promise<{ id: number }>;
 }
+
+export type NewReview = {
+  commitId: string;
+  body: string;
+  comments: { path: string; line: number; body: string }[];
+};
 
 export type CheckRun = {
   readonly id: number;
@@ -77,6 +104,8 @@ export type PullRequest = {
   readonly number: number;
   readonly url: string;
   readonly draft: boolean;
+  /** Identifiant GraphQL, pour passer la PR en « ready ». */
+  readonly nodeId: string;
 };
 export type NewPullRequest = {
   head: string;
@@ -129,7 +158,9 @@ export class OctokitGitHubApp implements GitHubApp {
       per_page: 10,
     });
     const pr = data[0];
-    return pr ? { number: pr.number, url: pr.html_url, draft: pr.draft ?? false } : undefined;
+    return pr
+      ? { number: pr.number, url: pr.html_url, draft: pr.draft ?? false, nodeId: pr.node_id }
+      : undefined;
   }
 
   async listCheckRuns(ref: RepoRef, sha: string): Promise<CheckRun[]> {
@@ -182,7 +213,115 @@ export class OctokitGitHubApp implements GitHubApp {
   async createPullRequest(ref: RepoRef, pr: NewPullRequest): Promise<PullRequest> {
     const octokit = await this.#installation(ref, { pull_requests: "write" });
     const { data } = await octokit.rest.pulls.create({ owner: ref.owner, repo: ref.repo, ...pr });
-    return { number: data.number, url: data.html_url, draft: data.draft ?? false };
+    return {
+      number: data.number,
+      url: data.html_url,
+      draft: data.draft ?? false,
+      nodeId: data.node_id,
+    };
+  }
+
+  async updatePullRequest(
+    ref: RepoRef,
+    number: number,
+    update: { title?: string; body?: string },
+  ): Promise<void> {
+    const octokit = await this.#installation(ref, { pull_requests: "write" });
+    await octokit.rest.pulls.update({
+      owner: ref.owner,
+      repo: ref.repo,
+      pull_number: number,
+      ...update,
+    });
+  }
+
+  async markReadyForReview(ref: RepoRef, pr: PullRequest): Promise<void> {
+    if (!pr.draft) {
+      return;
+    }
+    const octokit = await this.#installation(ref, { pull_requests: "write" });
+    await octokit.graphql(
+      "mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { clientMutationId } }",
+      { id: pr.nodeId },
+    );
+  }
+
+  async createReview(ref: RepoRef, number: number, review: NewReview): Promise<{ id: number }> {
+    const octokit = await this.#installation(ref, { pull_requests: "write" });
+    const base = {
+      owner: ref.owner,
+      repo: ref.repo,
+      pull_number: number,
+      commit_id: review.commitId,
+      event: "COMMENT" as const,
+    };
+    try {
+      const { data } = await octokit.rest.pulls.createReview({
+        ...base,
+        body: review.body,
+        comments: review.comments.map((c) => ({ ...c, side: "RIGHT" as const })),
+      });
+      return { id: data.id };
+    } catch (error) {
+      // Une ligne hors du diff rend toute la review invalide (422) : on replie les commentaires dans le corps.
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "status" in error &&
+        error.status === 422 &&
+        review.comments.length > 0
+      ) {
+        const folded = review.comments.map((c) => `- \`${c.path}:${c.line}\` ${c.body}`).join("\n");
+        const { data } = await octokit.rest.pulls.createReview({
+          ...base,
+          body: `${review.body}\n\n${folded}`,
+        });
+        return { id: data.id };
+      }
+      throw error;
+    }
+  }
+
+  async findReview(
+    ref: RepoRef,
+    number: number,
+    marker: string,
+  ): Promise<{ id: number } | undefined> {
+    const octokit = await this.#installation(ref, { pull_requests: "read" });
+    const reviews = await octokit.paginate(octokit.rest.pulls.listReviews, {
+      owner: ref.owner,
+      repo: ref.repo,
+      pull_number: number,
+      per_page: 100,
+    });
+    const found = reviews.find((r) => r.body.includes(marker) && r.user?.type === "Bot");
+    return found ? { id: found.id } : undefined;
+  }
+
+  async listReviewComments(ref: RepoRef, number: number, reviewId: number) {
+    const octokit = await this.#installation(ref, { pull_requests: "read" });
+    const comments = await octokit.paginate(octokit.rest.pulls.listCommentsForReview, {
+      owner: ref.owner,
+      repo: ref.repo,
+      pull_number: number,
+      review_id: reviewId,
+      per_page: 100,
+    });
+    return comments.map((c) => ({ path: c.path, line: c.line ?? null, body: c.body }));
+  }
+
+  async getBranchRules(ref: RepoRef, branch: string) {
+    const octokit = await this.#installation(ref, { metadata: "read" });
+    const { data } = await octokit.rest.repos.getBranchRules({
+      owner: ref.owner,
+      repo: ref.repo,
+      branch,
+      per_page: 100,
+    });
+    return data.map((r) => ({
+      type: r.type,
+      ...("parameters" in r && r.parameters ? { parameters: r.parameters } : {}),
+    }));
   }
 
   async getApp(): Promise<AppInfo> {

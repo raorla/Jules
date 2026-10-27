@@ -26,7 +26,22 @@ export type FakeComment = {
 
 export class FakeGitHub implements GitHubApp {
   readonly comments: FakeComment[] = [];
-  readonly pullRequests: (PullRequest & NewPullRequest & { repo: string })[] = [];
+  readonly pullRequests: (PullRequest & NewPullRequest & { repo: string; ready?: boolean })[] = [];
+  readonly reviews: {
+    id: number;
+    repo: string;
+    number: number;
+    commitId: string;
+    body: string;
+    comments: { path: string; line: number; body: string }[];
+  }[] = [];
+  /** Commentaires en ligne d'une review humaine, par identifiant de review. */
+  readonly humanReviewComments = new Map<
+    number,
+    { path: string; line: number | null; body: string }[]
+  >();
+  /** Règles de branche renvoyées par `getBranchRules`. */
+  branchRules: { type: string; parameters?: Record<string, unknown> }[] = [];
   /** Check runs par SHA : ceux de Jules, et ceux de la « CI du projet » posés par les tests. */
   readonly checkRuns = new Map<string, (CheckRun & { summary?: string })[]>();
   /** Dépôts git locaux qui jouent le rôle de GitHub : `owner/repo` → chemin d'un dépôt nu. */
@@ -217,14 +232,70 @@ export class FakeGitHub implements GitHubApp {
   async createPullRequest(ref: RepoRef, pr: NewPullRequest) {
     this.#maybeFail("createPullRequest");
     await Promise.resolve();
+    const number = this.#nextId++;
     const created = {
       ...pr,
       repo: `${ref.owner}/${ref.repo}`,
-      number: this.#nextId++,
-      url: `https://github.com/${ref.owner}/${ref.repo}/pull/x`,
+      number,
+      url: `https://github.com/${ref.owner}/${ref.repo}/pull/${number}`,
+      nodeId: `PR_${number}`,
     };
     this.pullRequests.push(created);
     return created;
+  }
+
+  updatePullRequest(
+    ref: RepoRef,
+    number: number,
+    update: { title?: string; body?: string },
+  ): Promise<void> {
+    const pr = this.pullRequests.find(
+      (p) => p.repo === `${ref.owner}/${ref.repo}` && p.number === number,
+    );
+    if (pr) {
+      Object.assign(pr, update);
+    }
+    return Promise.resolve();
+  }
+
+  markReadyForReview(ref: RepoRef, target: PullRequest): Promise<void> {
+    const pr = this.pullRequests.find(
+      (p) => p.repo === `${ref.owner}/${ref.repo}` && p.number === target.number,
+    );
+    if (pr) {
+      Object.assign(pr, { draft: false, ready: true });
+    }
+    return Promise.resolve();
+  }
+
+  createReview(
+    ref: RepoRef,
+    number: number,
+    review: {
+      commitId: string;
+      body: string;
+      comments: { path: string; line: number; body: string }[];
+    },
+  ) {
+    const created = { id: this.#nextId++, repo: `${ref.owner}/${ref.repo}`, number, ...review };
+    this.reviews.push(created);
+    return Promise.resolve({ id: created.id });
+  }
+
+  findReview(ref: RepoRef, number: number, marker: string) {
+    const found = this.reviews.find(
+      (r) =>
+        r.repo === `${ref.owner}/${ref.repo}` && r.number === number && r.body.includes(marker),
+    );
+    return Promise.resolve(found ? { id: found.id } : undefined);
+  }
+
+  listReviewComments(_ref: RepoRef, _number: number, reviewId: number) {
+    return Promise.resolve(this.humanReviewComments.get(reviewId) ?? []);
+  }
+
+  getBranchRules() {
+    return Promise.resolve(this.branchRules);
   }
 
   /** Commentaire laissé par une personne (par exemple pour tenter de recopier un marqueur). */

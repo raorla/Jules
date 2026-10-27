@@ -5,8 +5,9 @@ import { z } from "zod";
 import type { WorkerDeps } from "./deps.js";
 import { enqueueEffect } from "./outbox.js";
 import { prepareConversation } from "./conversation.js";
+import { preparePullRequestClosed, preparePullRequestReview } from "./pull-request-events.js";
 import { upsertInstallation, upsertRepo, upsertUser } from "./identities.js";
-import { detectTrigger } from "./triggers.js";
+import { detectTrigger, type TaskTrigger } from "./triggers.js";
 
 // Traitement des webhooks stockés par le gateway. Un événement est traité en deux temps :
 // d'abord les lectures réseau (droits GitHub), puis une seule transaction qui écrit la tâche,
@@ -52,6 +53,9 @@ async function prepareTrigger(deps: WorkerDeps, event: EventRow): Promise<Apply>
   const detected = detectTrigger(event.event, event.payload, deps.settings);
   if ("ignored" in detected) {
     return ignore(detected.ignored);
+  }
+  if ("setup" in detected) {
+    return prepareSetup(deps, event, detected.setup);
   }
   const trigger = detected.trigger;
   const role = await deps.github.getRepoRole(
@@ -133,6 +137,55 @@ async function prepareTrigger(deps: WorkerDeps, event: EventRow): Promise<Apply>
   };
 }
 
+/** `@jules setup` : onboarding du repo, réservé à `maintain` et plus (WORKFLOW.md §7). */
+async function prepareSetup(
+  deps: WorkerDeps,
+  event: EventRow,
+  trigger: TaskTrigger,
+): Promise<Apply> {
+  const ref = {
+    installationId: trigger.installationId,
+    owner: trigger.repo.owner,
+    repo: trigger.repo.name,
+  };
+  const role = await deps.github.getRepoRole(ref, trigger.sender.login);
+  return async (tx) => {
+    const orgId = event.orgId;
+    const installationId = await upsertInstallation(tx, orgId, {
+      githubInstallationId: trigger.installationId,
+      accountLogin: trigger.repo.owner,
+      accountType: trigger.repo.ownerType,
+    });
+    const repoId = await upsertRepo(tx, orgId, installationId, trigger.repo);
+    const userId = await upsertUser(tx, orgId, trigger.sender);
+    const allowed = hasAtLeast(role, "maintain");
+    await appendAudit(tx, {
+      orgId,
+      actor: { type: "user", id: userId },
+      action: allowed ? "setup.requested" : "setup.denied",
+      target: { type: "repo", id: repoId },
+      data: { eventId: event.id, role },
+    });
+    if (!allowed) {
+      return { status: "ignored", reason: "insufficient_permission" };
+    }
+    await enqueueEffect(tx, {
+      orgId,
+      kind: "github.setup",
+      idempotencyKey: `setup:${event.id}`,
+      payload: {
+        ...ref,
+        defaultBranch: trigger.repo.defaultBranch ?? "main",
+        issueNumber: trigger.issue.number,
+        eventId: event.id,
+        requester: trigger.sender.login,
+        language: deps.settings.language,
+      },
+    });
+    return { status: "processed", reason: "setup" };
+  };
+}
+
 const installationPayload = z.object({
   action: z.string(),
   installation: z.object({
@@ -187,6 +240,10 @@ async function prepare(deps: WorkerDeps, event: EventRow): Promise<Apply> {
       return (await prepareConversation(deps, event)) ?? prepareTrigger(deps, event);
     case "issues":
       return prepareTrigger(deps, event);
+    case "pull_request_review":
+      return preparePullRequestReview(deps, event);
+    case "pull_request":
+      return preparePullRequestClosed(event);
     case "installation":
       return prepareInstallation(event);
     default:

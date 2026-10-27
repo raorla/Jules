@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { checkDesign, checkSpec, designSchema, specSchema, triageSchema } from "./phases.js";
+import {
+  checkDesign,
+  checkSpec,
+  designSchema,
+  gateG6,
+  reviewSchema,
+  specSchema,
+  triageSchema,
+} from "./phases.js";
 
 const spec = specSchema.parse({
   problem: "Pas d'endpoint de santé",
@@ -76,5 +84,75 @@ describe("conception (G3)", () => {
       "G3 : AC-9 n'existe pas dans la spec",
     ]);
     expect(checkDesign(design(["AC-1"]), undefined)).toEqual([]);
+  });
+});
+
+describe("review (G6)", () => {
+  const review = (overrides: Record<string, unknown>) =>
+    reviewSchema.parse({
+      verdict: "approve",
+      summary: "ok",
+      acVerdicts: [
+        { ac: "AC-1", status: "met" },
+        { ac: "AC-2", status: "met" },
+      ],
+      ...overrides,
+    });
+
+  it("passe quand tout est met et sans finding bloquant", () => {
+    expect(
+      gateG6(review({ findings: [{ severity: "nit", file: "a.ts", comment: "nom" }] }), spec),
+    ).toEqual({ outcome: "approved", problems: [] });
+  });
+
+  it("renvoie en développement un critère non implémenté, même si le verdict dit approve", () => {
+    expect(
+      reviewSchema.safeParse({
+        verdict: "approve",
+        summary: "x",
+        acVerdicts: [{ ac: "AC-1", status: "missing" }],
+      }).success,
+    ).toBe(false);
+    const missing = review({
+      verdict: "request_changes",
+      acVerdicts: [
+        { ac: "AC-1", status: "met" },
+        { ac: "AC-2", status: "missing", note: "pas de 503" },
+      ],
+    });
+    expect(gateG6(missing, spec)).toEqual({
+      outcome: "changes_requested",
+      problems: ["AC-2 non implémenté : pas de 503"],
+    });
+    expect(gateG6(review({ acVerdicts: [{ ac: "AC-1", status: "met" }] }), spec).problems).toEqual([
+      "AC-2 non évalué par le reviewer",
+    ]);
+  });
+
+  it("bloque sur un finding major ou blocker, et escalade si demandé", () => {
+    expect(
+      gateG6(
+        review({
+          findings: [{ severity: "major", file: "a.ts", line: 3, comment: "injection SQL" }],
+        }),
+        spec,
+      ).problems,
+    ).toEqual(["major a.ts:3 : injection SQL"]);
+    expect(gateG6(review({ verdict: "escalate" }), spec).outcome).toBe("escalated");
+    expect(gateG6(review({ verdict: "request_changes" }), spec).problems).toEqual([
+      "changements demandés par le reviewer",
+    ]);
+    expect(
+      gateG6(
+        review({
+          acVerdicts: [
+            { ac: "AC-1", status: "partial" },
+            { ac: "AC-2", status: "met" },
+          ],
+          verdict: "request_changes",
+        }),
+        undefined,
+      ).outcome,
+    ).toBe("changes_requested");
   });
 });

@@ -33,10 +33,12 @@ export type Apply = (tx: Tx) => Promise<Outcome>;
 const APPROVABLE = ["awaiting_spec_approval", "awaiting_design_approval"] as const;
 const DEFAULT_BUDGET_CAP_USD = 50;
 
-async function activeTask(
+/** Tâche en cours d'une issue, ou de la PR que Jules a ouverte pour elle. */
+export async function activeTask(
   tx: Tx,
   githubRepoId: number,
   issueNumber: number,
+  onPullRequest = false,
 ): Promise<TaskRow | undefined> {
   const [row] = await tx
     .select({ task: tasks })
@@ -45,7 +47,7 @@ async function activeTask(
     .where(
       and(
         eq(repos.githubRepoId, githubRepoId),
-        eq(tasks.issueNumber, issueNumber),
+        onPullRequest ? eq(tasks.prNumber, issueNumber) : eq(tasks.issueNumber, issueNumber),
         notInArray(tasks.state, ["done", "cancelled"]),
       ),
     )
@@ -84,21 +86,24 @@ export async function prepareConversation(
     return undefined;
   }
   const p = parsed.data;
-  if (
-    p.action !== "created" ||
-    p.issue.pull_request !== undefined ||
-    p.sender.type === "Bot" ||
-    p.comment.user.type === "Bot"
-  ) {
+  if (p.action !== "created" || p.sender.type === "Bot" || p.comment.user.type === "Bot") {
     return undefined;
   }
+  // Dans une PR ouverte par Jules, la conversation porte sur la tâche de cette PR (`/jules fix`…).
+  const onPullRequest = p.issue.pull_request !== undefined;
   const ref: RepoRef = {
     installationId: p.installation.id,
     owner: p.repository.owner.login,
     repo: p.repository.name,
   };
   const command = parseCommand(p.comment.body);
-  const peek = await deps.db.transaction((tx) => activeTask(tx, p.repository.id, p.issue.number));
+  const peek = await deps.db.transaction((tx) =>
+    activeTask(tx, p.repository.id, p.issue.number, onPullRequest),
+  );
+  if (onPullRequest && (!command || !peek)) {
+    const reason = peek ? "pull_request_comment" : "no_task_for_pull_request";
+    return () => Promise.resolve({ status: "ignored" as const, reason });
+  }
   if (!command && peek?.state !== "awaiting_info") {
     return undefined;
   }
@@ -141,7 +146,7 @@ export async function prepareConversation(
     await upsertRepo(tx, orgId, installationId, trigger.repo);
     const userId = await upsertUser(tx, orgId, trigger.sender);
     const actor = { type: "user" as const, id: userId };
-    const task = await activeTask(tx, p.repository.id, p.issue.number);
+    const task = await activeTask(tx, p.repository.id, p.issue.number, onPullRequest);
 
     if (!command) {
       // Réponse à des questions : seules les personnes qui peuvent créer une tâche peuvent répondre.
@@ -343,17 +348,27 @@ async function applyCommand(
         .where(eq(tasks.id, task.id));
       return { ok: true, reason: `budget porté à ${next} $ (plafond ${cap} $)` };
     }
-    case "fix":
-      return { ok: false, reason: "`/jules fix` s'utilise dans la PR" };
+    case "fix": {
+      // Retour humain sur la PR : nouvelle itération du développeur sur la même branche (WORKFLOW.md §4, phase 8).
+      if (task.state !== "awaiting_human_review") {
+        return {
+          ok: false,
+          reason: `\`/jules fix\` s'utilise quand la PR attend ta review (état \`${task.state}\`)`,
+        };
+      }
+      await storeHumanInput(tx, task, "fix", cmd.instructions);
+      const r = await applyTransition(tx, task, { type: "human_changes_requested" }, { actor });
+      return r.ok ? { ok: true, reason: r.reason } : r;
+    }
     case "stop_all":
       return { ok: true, reason: "arrêt d'urgence" };
   }
 }
 
-async function storeHumanInput(
+export async function storeHumanInput(
   tx: Tx,
   task: TaskRow,
-  kind: "answer" | "revise",
+  kind: "answer" | "revise" | "fix",
   text: string,
 ): Promise<void> {
   const [last] = await tx

@@ -36,12 +36,13 @@ function sse(res: ServerResponse, events: Record<string, unknown>[]) {
 }
 
 /** Un scénario par rôle, reconnu à l'outil de soumission présent dans la requête. */
-export type Scripts = Partial<Record<"triage" | "spec" | "design" | "build", Step[]>>;
+export type Scripts = Partial<Record<"triage" | "spec" | "design" | "build" | "review", Step[]>>;
 const ROLE_TOOLS = {
   triage: "mcp__jules__submit_triage",
   spec: "mcp__jules__submit_spec",
   design: "mcp__jules__submit_design",
   build: "mcp__jules__submit_build",
+  review: "mcp__jules__submit_review",
 } as const;
 
 export async function startFakeModel(input: Step[] | Scripts): Promise<FakeModel> {

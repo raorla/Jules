@@ -178,6 +178,8 @@ Sur un repo de test, puis sur 2 ou 3 de tes vrais repos : une issue `@jules` dev
 
 ### M4 — Review, traçabilité et boucle humaine (M)
 
+> Statut (27/10/2026) : code livré. Une PR dont un critère manque est renvoyée en développement par le reviewer (test automatisé avec le vrai sandbox). La review est publiée en COMMENT avec ses commentaires en ligne, et la matrice de traçabilité est dans la PR. En L2, la PR passe en « ready ». `/jules fix`, « Request changes » et `@jules setup` sont couverts par des tests. Restent, sur le vrai GitHub : l'onboarding des repos pilotes et les 10 issues réelles.
+
 **Livrables**
 - Le rôle reviewer (autre modèle, contexte vierge) :
   - review de type `COMMENT` avec commentaires en ligne ;

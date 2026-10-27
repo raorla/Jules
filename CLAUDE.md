@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Milestones **M0–M3 are implemented**: issue → triage → spec → design (human gates H1/H2 per risk and autonomy) → developer in a gVisor sandbox → push → draft PR → verification gates (G4.x, G5.x) replayed by the worker on the pushed commit, looping back to the developer on failure. The task then waits in `reviewing`. M4 (AI review, traceability, human loop) is next. The design documents are written in French; keep that language when editing them, and use French for user-facing strings and code comments, matching the existing code.
+Milestones **M0–M4 are implemented**: issue → triage → spec → design (human gates H1/H2 per risk and autonomy) → developer in a gVisor sandbox → push → draft PR → verification gates replayed by the worker → AI review on another model (G6, COMMENT review, `Jules / review` check run, traceability matrix in the PR) → human review, with `/jules fix` and "Request changes" looping back to the developer, plus `@jules setup` onboarding. M5 (metrics, evals, learner) is next. The design documents are written in French; keep that language when editing them, and use French for user-facing strings and code comments, matching the existing code.
 
 | File | Role |
 |---|---|

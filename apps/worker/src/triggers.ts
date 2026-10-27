@@ -27,10 +27,10 @@ export type TaskTrigger = {
   readonly request: string;
 };
 
-export type TriggerResult = { trigger: TaskTrigger } | { ignored: string };
+export type TriggerResult = { trigger: TaskTrigger } | { setup: TaskTrigger } | { ignored: string };
 
-/** Sous-commandes réservées qui arrivent avec leur jalon (`@jules setup` en M4, `@jules devops` en M7). */
-const RESERVED_SUBCOMMANDS = new Set(["setup", "devops"]);
+/** Sous-commandes réservées qui arrivent avec leur jalon (`@jules devops` en M7). */
+const RESERVED_SUBCOMMANDS = new Set(["devops"]);
 
 const account = z.object({ id: z.number(), login: z.string(), type: z.string() });
 const repository = z.object({
@@ -114,6 +114,9 @@ export function detectTrigger(
       return { ignored: "no_mention" };
     }
     const subcommand = mention.rest.split(/\s+/)[0]?.toLowerCase() ?? "";
+    if (subcommand === "setup") {
+      return { setup: toTrigger(p, "issue_comment", p.comment.body) };
+    }
     if (RESERVED_SUBCOMMANDS.has(subcommand)) {
       return { ignored: `subcommand_unavailable:${subcommand}` };
     }

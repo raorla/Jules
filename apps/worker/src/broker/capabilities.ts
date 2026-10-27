@@ -37,6 +37,7 @@ const LIMITS: Partial<Record<CapabilityName, Limit>> = {
   submit_triage: { perRun: 1 },
   submit_spec: { perRun: 1 },
   submit_design: { perRun: 1 },
+  submit_review: { perRun: 1 },
 };
 
 async function latest<T>(tx: Tx, taskId: string, kind: string): Promise<T | undefined> {
@@ -121,6 +122,10 @@ const handlers: Partial<Record<CapabilityName, Handler>> = {
   submit_spec: async (tx, ctx, input: object) => {
     const version = await storeArtifact(tx, ctx, "spec", input);
     return `ok: spec v${version} enregistrée (gate G2 passée). Termine maintenant l'exécution.`;
+  },
+  submit_review: async (tx, ctx, input: object) => {
+    const version = await storeArtifact(tx, ctx, "review", input);
+    return `ok: review v${version} enregistrée. Termine maintenant l'exécution.`;
   },
   submit_design: async (tx, ctx, input: object) => {
     const version = await storeArtifact(tx, ctx, "design", input);

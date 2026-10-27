@@ -3,8 +3,11 @@ import { join } from "node:path";
 import { appendAudit } from "@jules/audit";
 import {
   SANDBOX_PATHS,
+  gateG6,
   runResultSchema,
   type Design,
+  type Review,
+  type Spec,
   type RunContext,
   type RunResult,
   type Triage,
@@ -38,6 +41,7 @@ import {
   changedPaths,
   clonePristine,
   createWorkspace,
+  git,
   importBundle,
   readFileAt,
   revParse,
@@ -71,7 +75,8 @@ export type RoleSettings = {
   timeoutMs: number;
 };
 
-export type AgentRole = "triager" | "specifier" | "architect" | "developer";
+export type AgentRole =
+  "triager" | "specifier" | "architect" | "developer" | "reviewer" | "security_reviewer";
 
 /** Ce qui distingue les rôles (ARCHITECTURE.md §6.1). */
 const ROLE_SPECS: Record<
@@ -92,7 +97,23 @@ const ROLE_SPECS: Record<
     submits: "build",
     effort: "xhigh",
   },
+  // Le reviewer travaille en contexte vierge, sur un autre modèle (ADR 0005), en lecture seule.
+  reviewer: {
+    tools: ["Read", "Glob", "Grep", "Bash"],
+    workspace: "ro",
+    submits: "review",
+    effort: "high",
+  },
+  security_reviewer: {
+    tools: ["Read", "Glob", "Grep", "Bash"],
+    workspace: "ro",
+    submits: "review",
+    effort: "high",
+  },
 };
+
+/** Modèle par défaut du reviewer : un autre que celui du développeur (ARCHITECTURE.md §6.1). */
+export const DEFAULT_REVIEWER_MODEL = "claude-sonnet-5-5";
 
 const isAgentRole = (role: string | undefined): role is AgentRole =>
   role !== undefined && role in ROLE_SPECS;
@@ -172,6 +193,7 @@ export class Orchestrator {
     return {
       ...base,
       effort: role === "developer" ? base.effort : ROLE_SPECS[role].effort,
+      ...(role === "reviewer" ? { model: DEFAULT_REVIEWER_MODEL, fallbackModel: base.model } : {}),
       ...this.#deps.config.roles?.[role],
     };
   }
@@ -298,7 +320,9 @@ export class Orchestrator {
       await this.verifyTask(task);
       return;
     }
-    const role = RUNNABLE_STATES[task.state];
+    const base = RUNNABLE_STATES[task.state];
+    // Une PR à risque high est relue par le reviewer de sécurité (ARCHITECTURE.md §6.1).
+    const role = base === "reviewer" && task.risk === "high" ? "security_reviewer" : base;
     if (!isAgentRole(role)) {
       await this.#deps.db.update(tasks).set({ leaseUntil: null }).where(eq(tasks.id, task.id));
       return;
@@ -432,6 +456,13 @@ export class Orchestrator {
                 : `${report.results.filter((r) => r.status === "fail").length} gate(s) en échec`,
             summary: renderReport(report),
           },
+        });
+        await enqueueEffect(tx, {
+          orgId: task.orgId,
+          kind: "github.pull_request",
+          idempotencyKey: `task:${task.id}:pr:gates:${report.commit}`,
+          serialKey: `task:${task.id}`,
+          payload: { taskId: task.id },
         });
       };
 
@@ -599,7 +630,10 @@ export class Orchestrator {
       }
       // Itération suivante (gates en échec, review, retour humain) : on repart de la tête de la branche.
       let startSha = baseSha;
-      if (role === "developer" && task.headSha) {
+      if (
+        (role === "developer" || role === "reviewer" || role === "security_reviewer") &&
+        task.headSha
+      ) {
         try {
           startSha = await revParse(pristine, task.headSha);
         } catch {
@@ -626,7 +660,16 @@ export class Orchestrator {
         systemPrompt: template
           .replaceAll("{{common}}", common)
           .replaceAll("{{language}}", language === "fr" ? "français" : "English"),
-        prompt: await this.#prompt(task, repo, conventions),
+        prompt: await this.#prompt(task, repo, conventions, {
+          ...(spec.submits === "review" && task.baseSha
+            ? {
+                diff: await git(
+                  ["diff", "--no-color", "--no-ext-diff", "--no-textconv", task.baseSha, startSha],
+                  { cwd: pristine },
+                ),
+              }
+            : {}),
+        }),
         builtinTools: spec.tools,
         capabilities: [...ROLE_CAPABILITIES[role], ...ALWAYS_DENIED_CAPABILITIES],
         maxTurns: settings.maxTurns,
@@ -805,6 +848,8 @@ export class Orchestrator {
           type: "design_submitted",
           adrPlanned: (submitted.content as Design).adr !== undefined,
         });
+      } else if (submitted && submitted.kind === "review") {
+        await this.#review(task, submitted.version, submitted.content as Review);
       } else if (submitted && role === "developer") {
         await this.#deliver(
           task,
@@ -858,11 +903,86 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * Gate G6 (WORKFLOW.md §5) sur la review soumise, puis ses effets : review GitHub de type COMMENT,
+   * check run `Jules / review`, description de PR à jour et, en L2 si la review est favorable, PR « ready ».
+   */
+  async #review(task: TaskRow, version: number, review: Review): Promise<void> {
+    const [specRow] = await this.#deps.db
+      .select({ content: artifacts.content })
+      .from(artifacts)
+      .where(and(eq(artifacts.taskId, task.id), eq(artifacts.kind, "spec")))
+      .orderBy(desc(artifacts.version))
+      .limit(1);
+    const { outcome, problems } = gateG6(review, specRow?.content as Spec | undefined);
+    const event: TaskEvent = {
+      type:
+        outcome === "approved"
+          ? "review_approved"
+          : outcome === "escalated"
+            ? "review_escalated"
+            : "changes_requested",
+    };
+    const fresh = await this.#reload(task.id);
+    await this.#apply(
+      fresh,
+      event,
+      { lastError: outcome === "approved" ? null : problems.join(" ; ").slice(0, 500) },
+      async (tx) => {
+        const sha = fresh.headSha ?? "";
+        await enqueueEffect(tx, {
+          orgId: task.orgId,
+          kind: "github.review",
+          idempotencyKey: `task:${task.id}:review:v${version}`,
+          serialKey: `task:${task.id}`,
+          payload: { taskId: task.id, reviewVersion: version },
+        });
+        await enqueueEffect(tx, {
+          orgId: task.orgId,
+          kind: "github.check_run",
+          idempotencyKey: `task:${task.id}:review-check:v${version}`,
+          serialKey: `task:${task.id}`,
+          payload: {
+            taskId: task.id,
+            sha,
+            name: "Jules / review",
+            conclusion:
+              outcome === "approved" ? "success" : outcome === "escalated" ? "neutral" : "failure",
+            title:
+              outcome === "approved"
+                ? "Review IA favorable"
+                : outcome === "escalated"
+                  ? "Review IA escaladée à un humain"
+                  : `${problems.length} point(s) à corriger`,
+            summary: [review.summary, "", ...problems.map((p) => `- ${p}`)].join("\n"),
+          },
+        });
+        await enqueueEffect(tx, {
+          orgId: task.orgId,
+          kind: "github.pull_request",
+          idempotencyKey: `task:${task.id}:pr:review:v${version}`,
+          serialKey: `task:${task.id}`,
+          payload: { taskId: task.id },
+        });
+        if (outcome === "approved" && fresh.autonomy === "L2") {
+          await enqueueEffect(tx, {
+            orgId: task.orgId,
+            kind: "github.pr_ready",
+            idempotencyKey: `task:${task.id}:ready`,
+            serialKey: `task:${task.id}`,
+            payload: { taskId: task.id },
+          });
+        }
+      },
+    );
+  }
+
   /** Message de l'exécution : la demande et tout ce qui la précède, encadrés comme des données (§15). */
   async #prompt(
     task: TaskRow,
     repo: RepoContext,
     conventions: string | undefined,
+    extra: { diff?: string } = {},
   ): Promise<string> {
     const rows = await this.#deps.db
       .select()
@@ -921,6 +1041,41 @@ export class Orchestrator {
           .filter((r) => r.status === "fail" || r.status === "warn")
           .map((r) => `- ${r.id} ${r.name} : ${r.status} — ${r.details}`),
       );
+    }
+    if (extra.diff !== undefined) {
+      const report = latest("gate_report") as
+        { results: { id: string; name: string; status: string; details: string }[] } | undefined;
+      sections.push(
+        "",
+        "# Diff de la PR (base → branche)",
+        "",
+        "<diff>",
+        extra.diff.slice(0, 80_000),
+        "</diff>",
+      );
+      if (report) {
+        sections.push(
+          "",
+          "# Rapport des gates",
+          "",
+          ...report.results.map((r) => `- ${r.id} ${r.name} : ${r.status} — ${r.details}`),
+        );
+      }
+    }
+    const review = latest("review") as Review | undefined;
+    if (review && task.state === "building" && extra.diff === undefined) {
+      const { problems } = gateG6(review, latest("spec") as Spec | undefined);
+      if (problems.length > 0) {
+        sections.push(
+          "",
+          "# Review de ta dernière build (à traiter)",
+          "",
+          ...problems.map((p) => `- ${p}`),
+          ...review.findings
+            .filter((f) => f.severity === "minor")
+            .map((f) => `- minor ${f.file}${f.line ? `:${f.line}` : ""} : ${f.comment}`),
+        );
+      }
     }
     if (human.length > 0) {
       const questions = latest("questions") as { questions: string[] } | undefined;
@@ -1041,7 +1196,7 @@ export class Orchestrator {
         await enqueueEffect(tx, {
           orgId: task.orgId,
           kind: "github.pull_request",
-          idempotencyKey: `task:${task.id}:pr:${branch}`,
+          idempotencyKey: `task:${task.id}:pr:${head}`,
           serialKey: `task:${task.id}`,
           payload: { taskId: task.id },
         });

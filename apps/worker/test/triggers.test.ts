@@ -82,7 +82,6 @@ describe("detectTrigger", () => {
       "pull_request_comment",
     ],
     ["sans mention", issueComment({ body: "merci" }), "no_mention"],
-    ["@jules setup (M4)", issueComment({ body: "@jules setup" }), "subcommand_unavailable:setup"],
     [
       "@jules devops (M7)",
       issueComment({ body: "@jules devops redémarre nginx" }),
@@ -90,6 +89,12 @@ describe("detectTrigger", () => {
     ],
   ])("ignore %s", (_, payload, reason) => {
     expect(detectTrigger("issue_comment", payload, settings)).toEqual({ ignored: reason });
+  });
+
+  it("reconnaît @jules setup", () => {
+    expect(
+      detectTrigger("issue_comment", issueComment({ body: "@jules setup" }), settings),
+    ).toMatchObject({ setup: { repo: { fullName: "acme/sandbox" } } });
   });
 
   it("crée une tâche depuis une issue ouverte qui mentionne Jules", () => {
