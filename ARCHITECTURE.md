@@ -657,7 +657,9 @@ GitHub ne renvoie pas automatiquement un webhook dont la livraison a échoué. U
 
 ### Sauvegardes et clé maître
 
-- PostgreSQL est sauvegardé chaque jour, chiffré et hors de l'hôte, dès le premier déploiement. Une restauration est testée avant le pilote.
+- PostgreSQL est sauvegardé chaque jour, chiffré et hors de l'hôte, dès le premier déploiement : une copie logique (`pg_dump`) et une copie physique (`pg_basebackup`). Une restauration est testée avant le pilote, puis chaque mois.
+- Depuis M11, la sauvegarde est aussi continue : les WAL sont archivés au plus tard toutes les 5 minutes et envoyés hors de l'hôte toutes les 5 minutes. La base se restaure à un instant donné (`restore-pitr.sh`), avec une perte maximale d'environ 10 minutes.
+- Le code et la base vérifient leur accord au démarrage : l'api, le gateway et le worker refusent une base en retard ou plus récente que leur code. Les montées de version passent par `deploy/upgrade.sh` (sauvegarde d'abord) et les migrations sont additives.
 - La clé maître de chiffrement n'est ni dans la base ni dans les sauvegardes. Une copie de secours est rangée à part (gestionnaire de mots de passe ou papier). Sans elle, les secrets d'une sauvegarde sont perdus.
 - Le chiffrement enveloppe permet de faire tourner la clé maître sans rechiffrer chaque secret. La clé de la GitHub App et les clés SSH ont aussi une procédure de rotation documentée.
 

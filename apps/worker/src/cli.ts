@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { verifyAuditChain } from "@jules/audit";
-import { DEFAULT_ORG_ID, createDatabase, migrate, orgs, secrets } from "@jules/db";
+import { DEFAULT_ORG_ID, createDatabase, migrate, orgs, schemaStatus, secrets } from "@jules/db";
 import { OctokitGitHubApp } from "@jules/forge";
 import { SandboxDriver, parseAllowlist } from "@jules/sandbox";
 import { SecretStore, generateMasterKey, keyringFromEnv, parseMasterKey } from "@jules/secrets";
 import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { parseArgs } from "node:util";
 import {
   ANTHROPIC_KEY_SECRET,
@@ -19,6 +20,12 @@ import { liftStop, stopAll } from "./emergency.js";
 import { computeMetrics, renderMetrics } from "@jules/metrics";
 import { purgeExpired } from "./retention.js";
 import { reconcileDeliveries } from "./reconcile.js";
+import {
+  exceptionsSchema,
+  renderSelfAudit,
+  selfAudit,
+  selfAuditFailed,
+} from "./security/self-audit.js";
 
 // Commandes d'exploitation du serveur (`jules …`). Elles marchent sans l'api.
 
@@ -32,6 +39,10 @@ const USAGE = `usage : jules <commande>
   secrets rotate               rechiffre les secrets avec JULES_MASTER_KEY
                                (l'ancienne clé dans JULES_MASTER_KEY_PREVIOUS)
   audit verify                 vérifie la chaîne du journal d'audit de chaque organisation
+  audit self [--root <dir>] [--osv <url>]
+                               audit de Jules par ses propres scanners (secrets, infra, et OSV
+                               si --osv est donné) ; code 1 si un finding critique ou haut est
+                               ouvert ou si un risque accepté a expiré (security/exceptions.json)
   reconcile [--hours <n>]      redemande à GitHub les webhooks manqués (72 h maximum)
   eval run --suite <dir> --prompts <dir> --label <l> --out <f>
                                joue la suite d'evals avec ces prompts (vrai modèle, coûte de l'argent)
@@ -84,6 +95,8 @@ async function main(argv: string[]): Promise<number> {
       label: { type: "string" },
       out: { type: "string" },
       tolerance: { type: "string" },
+      root: { type: "string" },
+      osv: { type: "string" },
     },
   });
   const [command, sub, arg] = positionals;
@@ -95,8 +108,13 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === "migrate") {
     const env = loadBaseEnv();
-    await withDatabase(env.DATABASE_URL, ({ db }) => migrate(db));
-    process.stdout.write("migrations appliquées\n");
+    const status = await withDatabase(env.DATABASE_URL, async ({ db }) => {
+      await migrate(db);
+      return schemaStatus(db);
+    });
+    process.stdout.write(
+      `migrations appliquées : ${status.applied}/${status.known}, dernière ${status.last ?? "?"}\n`,
+    );
     return 0;
   }
 
@@ -155,6 +173,21 @@ async function main(argv: string[]): Promise<number> {
       `${count} secret(s) rechiffré(s) avec la clé ${parseMasterKey(env.JULES_MASTER_KEY).id}\n`,
     );
     return 0;
+  }
+
+  if (command === "audit" && sub === "self") {
+    const root = values.root ?? process.cwd();
+    const exceptions = exceptionsSchema.parse(
+      JSON.parse(readFileSync(join(root, "security", "exceptions.json"), "utf8")),
+    );
+    const report = await selfAudit({
+      root,
+      exceptions,
+      now: new Date(),
+      ...(values.osv ? { osv: { baseUrl: values.osv } } : {}),
+    });
+    process.stdout.write(`${renderSelfAudit(report)}\n`);
+    return selfAuditFailed(report) ? 1 : 0;
   }
 
   if (command === "audit" && sub === "verify") {

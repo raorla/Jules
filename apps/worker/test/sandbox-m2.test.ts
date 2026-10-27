@@ -1,4 +1,15 @@
-import { DEFAULT_ORG_ID, auditLog, commands, eq, events, repos, runs, sql, tasks } from "@jules/db";
+import {
+  DEFAULT_ORG_ID,
+  asc,
+  auditLog,
+  commands,
+  eq,
+  events,
+  repos,
+  runs,
+  sql,
+  tasks,
+} from "@jules/db";
 import { startTestDatabase, type TestDatabase } from "@jules/db/testing";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { drainEvents } from "../src/inbox.js";
@@ -83,8 +94,15 @@ const BUILD: Step[] = [
 
 const ref = { installationId: 4242, owner: "acme", repo: "sandbox" };
 const state = async (id: string) => (await t.db.select().from(tasks).where(eq(tasks.id, id)))[0];
+// Dans l'ordre des exécutions : sans tri, PostgreSQL rend les lignes dans un ordre quelconque.
 const rolesRun = async (id: string) =>
-  (await t.db.select({ role: runs.role }).from(runs).where(eq(runs.taskId, id))).map((r) => r.role);
+  (
+    await t.db
+      .select({ role: runs.role })
+      .from(runs)
+      .where(eq(runs.taskId, id))
+      .orderBy(asc(runs.createdAt), asc(runs.startedAt))
+  ).map((r) => r.role);
 const setAutonomy = (autonomy: "L0" | "L1" | "L2") =>
   t.db.update(repos).set({ autonomy }).where(eq(repos.githubRepoId, 99));
 

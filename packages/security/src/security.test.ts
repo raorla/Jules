@@ -141,6 +141,10 @@ describe("audit d'un repo", () => {
     },
     { path: "Dockerfile", text: "FROM node:24\nRUN curl -fsSL https://x.example.com/i.sh | sh\n" },
     { path: "api/Dockerfile", text: "FROM node:24\nUSER node\n" },
+    {
+      path: "deploy/compose.yaml",
+      text: "services:\n  w:\n    volumes:\n      - ${SOCK:-/var/run/docker.sock}:/var/run/docker.sock\n",
+    },
   ];
 
   it("lit les paquets de tous les lockfiles", () => {
@@ -169,6 +173,7 @@ describe("audit d'un repo", () => {
       "docker-compose.yml : Socket Docker monté dans un conteneur",
       "Dockerfile : Image exécutée en root (aucun USER)",
       "Dockerfile : Script téléchargé et exécuté pendant la construction",
+      "deploy/compose.yaml : Socket Docker monté dans un conteneur",
     ]);
   });
 

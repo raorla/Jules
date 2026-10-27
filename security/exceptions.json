@@ -1,0 +1,130 @@
+[
+  {
+    "path": "apps/api/test/api.test.ts",
+    "title": "Secret dans le code : clé privée",
+    "decision": "false_positive",
+    "note": "en-tête de clé factice : le test vérifie qu'un secret scellé n'est jamais relu"
+  },
+  {
+    "path": "apps/desktop/e2e/local-server.ts",
+    "title": "Secret dans le code : valeur secrète (secret)",
+    "decision": "false_positive",
+    "note": "secret de connexion des tests e2e du mode local, sans valeur réelle"
+  },
+  {
+    "path": "apps/desktop/e2e/local.spec.ts",
+    "title": "Secret dans le code : valeur secrète (secret)",
+    "decision": "false_positive",
+    "note": "secret de connexion des tests e2e du mode local, sans valeur réelle"
+  },
+  {
+    "path": "apps/worker/test/broker.test.ts",
+    "title": "Secret dans le code : clé Anthropic",
+    "decision": "false_positive",
+    "note": "valeur factice d'un test, qui prouve que le masquage ou le scanner la trouve"
+  },
+  {
+    "path": "apps/worker/test/devops-harness.ts",
+    "title": "Secret dans le code : clé Anthropic",
+    "decision": "false_positive",
+    "note": "valeur factice d'un test, qui prouve que le masquage ou le scanner la trouve"
+  },
+  {
+    "path": "apps/worker/test/sandbox-e2e.test.ts",
+    "title": "Secret dans le code : jeton GitHub",
+    "decision": "false_positive",
+    "note": "valeur factice d'un test, qui prouve que le masquage ou le scanner la trouve"
+  },
+  {
+    "path": "apps/worker/test/sandbox-harness.ts",
+    "title": "Secret dans le code : clé Anthropic",
+    "decision": "false_positive",
+    "note": "valeur factice d'un test, qui prouve que le masquage ou le scanner la trouve"
+  },
+  {
+    "path": "apps/worker/test/sandbox-m3.test.ts",
+    "title": "Secret dans le code : clé AWS",
+    "decision": "false_positive",
+    "note": "PR piégée de M3 : la gate G4.2 doit la bloquer"
+  },
+  {
+    "path": "apps/worker/test/sandbox-m5.test.ts",
+    "title": "Secret dans le code : clé Anthropic",
+    "decision": "false_positive",
+    "note": "valeur factice d'un test, qui prouve que le masquage ou le scanner la trouve"
+  },
+  {
+    "path": "apps/worker/test/security.test.ts",
+    "title": "Secret dans le code : jeton GitHub",
+    "decision": "false_positive",
+    "note": "secrets factices posés sur un serveur de test : l'audit ne doit jamais en sortir la valeur"
+  },
+  {
+    "path": "apps/worker/test/security.test.ts",
+    "title": "Secret dans le code : clé Stripe",
+    "decision": "false_positive",
+    "note": "secrets factices posés sur un serveur de test : l'audit ne doit jamais en sortir la valeur"
+  },
+  {
+    "path": "apps/worker/test/security.test.ts",
+    "title": "Secret dans le code : valeur secrète (api_key)",
+    "decision": "false_positive",
+    "note": "repo de test qui contient un secret factice, pour l'audit de repo"
+  },
+  {
+    "path": "packages/forge/src/git.test.ts",
+    "title": "Secret dans le code : jeton GitHub",
+    "decision": "false_positive",
+    "note": "jeton factice : le test vérifie qu'il n'apparaît jamais dans les erreurs de git"
+  },
+  {
+    "path": "packages/forge/src/testing.ts",
+    "title": "Secret dans le code : jeton GitHub",
+    "decision": "false_positive",
+    "note": "jeton d'installation du faux GitHub des tests (@jules/forge/testing)"
+  },
+  {
+    "path": "packages/gates/src/gates.test.ts",
+    "title": "Secret dans le code : clé AWS",
+    "decision": "false_positive",
+    "note": "jeu de cas du scanner de secrets (G4.2)"
+  },
+  {
+    "path": "packages/gates/src/gates.test.ts",
+    "title": "Secret dans le code : clé Anthropic",
+    "decision": "false_positive",
+    "note": "jeu de cas du scanner de secrets (G4.2)"
+  },
+  {
+    "path": "packages/gates/src/gates.test.ts",
+    "title": "Secret dans le code : clé privée",
+    "decision": "false_positive",
+    "note": "jeu de cas du scanner de secrets (G4.2)"
+  },
+  {
+    "path": "packages/gates/src/gates.test.ts",
+    "title": "Secret dans le code : valeur secrète (password)",
+    "decision": "false_positive",
+    "note": "jeu de cas du scanner de secrets (G4.2)"
+  },
+  {
+    "path": "packages/security/src/security.test.ts",
+    "title": "Secret dans le code : valeur secrète (api_key)",
+    "decision": "false_positive",
+    "note": "jeu de cas de l'audit de repo"
+  },
+  {
+    "path": "deploy/compose.yaml",
+    "title": "Socket Docker monté dans un conteneur",
+    "decision": "accept_risk",
+    "until": "2027-10-27",
+    "note": "le worker crée les sandboxes par l'API Docker : c'est le seul service qui reçoit le socket, sur un hôte dédié sans autres données (ARCHITECTURE.md §8, §19) ; aucun agent n'y a accès"
+  },
+  {
+    "path": "deploy/local/compose.yaml",
+    "title": "Socket Docker monté dans un conteneur",
+    "decision": "accept_risk",
+    "until": "2027-10-27",
+    "note": "mode local : même raison qu'en serveur ; le moteur est celui de la personne, et l'isolation affichée par l'app (ARCHITECTURE.md §4.7)"
+  }
+]

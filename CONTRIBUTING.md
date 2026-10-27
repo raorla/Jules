@@ -45,6 +45,7 @@ Pendant le développement, les packages exposent leurs sources TypeScript sous l
 - Le schéma est dans `packages/db/src/schema.ts`. Une migration se génère avec `pnpm db:generate`, puis se relit.
 - Chaque nouvelle table porte un `org_id` non nul ([ADR 0013](ARCHITECTURE.md#23-décisions-à-formaliser-docsadr)). Un test le vérifie.
 - Une migration publiée ne se modifie plus. On corrige par une nouvelle migration.
+- Une migration est additive : nouvelles tables, nouvelles colonnes avec une valeur par défaut. Supprimer une table ou une colonne, changer un type ou renommer demande le commentaire `-- jules: destructif accepté : <raison>` et un plan de reprise ; sinon un test la refuse. La montée de version depuis le noyau publié (M5) est rejouée avec des données réelles (`apps/worker/test/upgrade.test.ts`).
 - Les triggers et le SQL écrit à la main vont dans une migration `--custom` (`pnpm --filter @jules/db exec drizzle-kit generate --custom`).
 
 ## Effets et audit

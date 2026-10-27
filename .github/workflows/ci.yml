@@ -34,6 +34,9 @@ jobs:
       - run: pnpm build
       # Testcontainers lance un vrai PostgreSQL : Docker est disponible sur les runners Ubuntu.
       - run: pnpm test
+      # Jules audité par son propre agent Sécurité (M11) : échoue sur un finding critique ou haut
+      # ouvert, ou sur un risque accepté dont l'échéance est passée.
+      - run: pnpm jules audit self --root . --osv https://api.osv.dev
 
   # Parcours Playwright de l'interface (ROADMAP M6) : vraie api, vrai PostgreSQL, Chromium.
   # Les captures de référence dépendent des polices du système : la CI vérifie les parcours, les

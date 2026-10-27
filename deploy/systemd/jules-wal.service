@@ -1,0 +1,9 @@
+[Unit]
+Description=Envoi des WAL de Jules hors de l'hôte (restic)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/jules/deploy
+ExecStart=/usr/bin/docker compose --profile ops run --rm --entrypoint wal-push.sh backup

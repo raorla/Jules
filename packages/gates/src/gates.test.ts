@@ -89,6 +89,7 @@ describe("G4.2 secrets", () => {
     ["jeton GitHub", `token: ghp_${"a1".repeat(18)}`],
     ["clé Anthropic", "ANTHROPIC=sk-ant-api03-abcdefghijklmnopqrstuvwx"],
     ["clé privée", "-----BEGIN RSA PRIVATE KEY-----"],
+    ["clé privée", 'const pem = "-----BEGIN EC PRIVATE KEY-----\\nMHcCAQEE";'],
     ["clé Stripe", `sk_live_${"x".repeat(24)}`],
     ["valeur secrète (password)", 'password = "Zx9!kQ2#mR7$vT4p"'],
   ])("trouve %s", (kind, text) => {
@@ -102,6 +103,9 @@ describe("G4.2 secrets", () => {
     'token: "${TOKEN_FROM_ENV}"',
     'apiKey = "aaaaaaaaaaaaaaaa"',
     "const x = 1;",
+    // Le nom d'un secret, pas sa valeur ; un en-tête de clé en texte d'exemple.
+    'export const GITHUB_APP_KEY_SECRET = "github_app_private_key";',
+    'placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"',
   ])("ignore %s", (text) => {
     expect(scanSecrets([file("a.js", [text])])).toEqual([]);
   });

@@ -1,5 +1,5 @@
 import { loadEnv } from "@jules/config";
-import { createDatabase } from "@jules/db";
+import { assertSchemaCurrent, createDatabase } from "@jules/db";
 import { z } from "zod";
 import { buildGateway } from "./app.js";
 
@@ -14,6 +14,8 @@ const env = loadEnv(
 );
 
 const database = createDatabase(env.DATABASE_URL, { max: 5 });
+// Le code et la base doivent avoir les mêmes migrations (M11) : ni base en retard, ni base plus récente.
+await assertSchemaCurrent(database.db);
 const app = buildGateway({
   db: database.db,
   webhookSecret: env.GITHUB_WEBHOOK_SECRET,

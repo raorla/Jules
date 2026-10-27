@@ -9,6 +9,7 @@ import {
   eq,
   inArray,
   lt,
+  notInArray,
   orgs,
   planSteps,
   servers,
@@ -40,6 +41,8 @@ export type PlanServiceDeps = {
   fetchImpl?: typeof fetch;
   /** Durée du verrou d'un serveur, prolongée tant que le plan s'exécute. */
   lockSeconds?: number;
+  /** Plans exécutés en même temps par ce worker, chacun sur un serveur différent (4 par défaut). */
+  maxConcurrentPlans?: number;
   approvalMinutes?: number;
   /** Pause entre deux essais d'une vérification HTTP. */
   httpRetryMs?: number;
@@ -275,16 +278,31 @@ export class PlanService {
     return running.length;
   }
 
-  /** Exécute les plans approuvés, un seul à la fois par serveur. Renvoie le nombre de plans lancés. */
+  /**
+   * Exécute les plans approuvés : un seul à la fois par serveur (verrou), plusieurs serveurs en même
+   * temps. Rend la main quand plus rien n'est exécutable. Renvoie le nombre de plans lancés.
+   */
   async drain(): Promise<number> {
+    const max = this.#deps.maxConcurrentPlans ?? 4;
+    const running = new Set<Promise<void>>();
     let started = 0;
     for (;;) {
-      const claimed = await this.#claim();
-      if (!claimed) {
+      while (running.size < max) {
+        const claimed = await this.#claim();
+        if (!claimed) {
+          break;
+        }
+        started += 1;
+        const execution: Promise<void> = this.#execute(claimed.plan, claimed.server).finally(() =>
+          running.delete(execution),
+        );
+        running.add(execution);
+      }
+      if (running.size === 0) {
         return started;
       }
-      started += 1;
-      await this.#execute(claimed.plan, claimed.server);
+      // Un plan terminé libère son serveur : le plan suivant de ce serveur devient exécutable.
+      await Promise.race(running);
     }
   }
 
@@ -311,49 +329,71 @@ export class PlanService {
     ].join("\n");
   }
 
-  /** Réserve un plan approuvé dont le serveur est libre, et pose le verrou dans la même écriture. */
+  /**
+   * Réserve un plan approuvé dont le serveur est libre, et pose le verrou dans la même écriture. Un
+   * seul plan verrouillé par essai : les autres workers prennent les plans des autres serveurs.
+   */
   async #claim(planId?: string): Promise<{ plan: PlanRow; server: ServerRow } | undefined> {
     const lockSeconds = this.#deps.lockSeconds ?? 900;
-    return this.#deps.db.transaction(async (tx) => {
-      const candidates = await tx
-        .select({ plan: changePlans, server: servers })
-        .from(changePlans)
-        .innerJoin(servers, eq(servers.id, changePlans.serverId))
-        .where(
-          and(
-            eq(changePlans.status, "approved"),
-            planId ? eq(changePlans.id, planId) : undefined,
-            sql`(${servers.lockPlanId} is null or ${servers.lockUntil} < now())`,
-          ),
-        )
-        .orderBy(asc(changePlans.approvedAt), asc(changePlans.createdAt))
-        .limit(10)
-        .for("update", { of: [changePlans], skipLocked: true });
-      for (const { plan, server } of candidates) {
-        const locked = await tx
+    const tried: string[] = [];
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const outcome = await this.#deps.db.transaction(async (tx) => {
+        const [candidate] = await tx
+          .select({ plan: changePlans, server: servers })
+          .from(changePlans)
+          .innerJoin(servers, eq(servers.id, changePlans.serverId))
+          .where(
+            and(
+              eq(changePlans.status, "approved"),
+              planId ? eq(changePlans.id, planId) : undefined,
+              tried.length > 0 ? notInArray(changePlans.id, tried) : undefined,
+              sql`(${servers.lockPlanId} is null or ${servers.lockUntil} < now())`,
+            ),
+          )
+          .orderBy(asc(changePlans.approvedAt), asc(changePlans.createdAt))
+          .limit(1)
+          .for("update", { of: [changePlans], skipLocked: true });
+        if (!candidate) {
+          return { kind: "none" as const };
+        }
+        const [lockedServer] = await tx
           .update(servers)
           .set({
-            lockPlanId: plan.id,
+            lockPlanId: candidate.plan.id,
             lockUntil: sql`now() + make_interval(secs => ${lockSeconds})`,
           })
           .where(
             and(
-              eq(servers.id, server.id),
+              eq(servers.id, candidate.server.id),
               sql`(${servers.lockPlanId} is null or ${servers.lockUntil} < now())`,
             ),
           )
           .returning();
-        const lockedServer = locked[0];
-        if (lockedServer) {
-          await tx
-            .update(changePlans)
-            .set({ status: "running", startedAt: sql`now()`, updatedAt: sql`now()` })
-            .where(eq(changePlans.id, plan.id));
-          return { plan: { ...plan, status: "running" }, server: lockedServer };
+        if (!lockedServer) {
+          // Un autre worker vient de prendre ce serveur : on essaie le plan suivant.
+          return { kind: "busy" as const, id: candidate.plan.id };
         }
+        await tx
+          .update(changePlans)
+          .set({ status: "running", startedAt: sql`now()`, updatedAt: sql`now()` })
+          .where(eq(changePlans.id, candidate.plan.id));
+        return {
+          kind: "claimed" as const,
+          claimed: {
+            plan: { ...candidate.plan, status: "running" as const },
+            server: lockedServer,
+          },
+        };
+      });
+      if (outcome.kind === "claimed") {
+        return outcome.claimed;
       }
-      return undefined;
-    });
+      if (outcome.kind === "none") {
+        return undefined;
+      }
+      tried.push(outcome.id);
+    }
+    return undefined;
   }
 
   async #execute(plan: PlanRow, server: ServerRow): Promise<void> {

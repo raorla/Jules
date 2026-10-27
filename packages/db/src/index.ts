@@ -1,5 +1,6 @@
 export * from "./client.js";
 export * from "./local.js";
+export * from "./schema-version.js";
 export * from "./schema.js";
 export {
   and,

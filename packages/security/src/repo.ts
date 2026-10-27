@@ -88,7 +88,8 @@ const RULES: {
   },
   {
     file: /(^|\/)(docker-)?compose[^/]*\.ya?ml$/,
-    test: /^\s*-\s*["']?\/var\/run\/docker\.sock/m,
+    // Aussi par une variable : `- ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock`.
+    test: /^\s*-\s*["']?\S*docker\.sock\S*:/m,
     title: "Socket Docker monté dans un conteneur",
     severity: "high",
   },

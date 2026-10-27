@@ -11,12 +11,29 @@ x-hardening: &hardening
 services:
   postgres:
     image: postgres:18-alpine
+    # Sauvegarde continue (M11) : chaque segment de WAL est archivé dans le volume, au plus tard
+    # toutes les 5 minutes, puis envoyé hors de l'hôte par deploy/backup/wal-push.sh. Avec la sauvegarde
+    # de base quotidienne, la base se restaure à un instant donné (deploy/backup/restore-pitr.sh).
+    command:
+      - postgres
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_timeout=300
+      - -c
+      - archive_command=mkdir -p /var/lib/postgresql/wal-archive && test ! -f /var/lib/postgresql/wal-archive/%f && cp %p /var/lib/postgresql/wal-archive/%f.tmp && mv /var/lib/postgresql/wal-archive/%f.tmp /var/lib/postgresql/wal-archive/%f
     environment:
       POSTGRES_DB: jules
       POSTGRES_USER: jules
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     secrets: [postgres_password]
-    volumes: [pgdata:/var/lib/postgresql]
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U jules -d jules"]
       interval: 5s
@@ -138,6 +155,8 @@ services:
       PGPASSFILE: /tmp/pgpass
       RESTIC_PASSWORD_FILE: /run/secrets/restic_password
     secrets: [postgres_password, restic_password]
+    # Le volume de la base, pour l'archive des WAL (wal-push.sh l'envoie puis l'allège).
+    volumes: [pgdata:/var/lib/postgresql]
     networks: [db, egress]
     restart: "no"
 

@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { loadEnv } from "@jules/config";
-import { createDatabase } from "@jules/db";
+import { assertSchemaCurrent, createDatabase } from "@jules/db";
 import { z } from "zod";
 import { buildApi } from "./app.js";
 
@@ -36,6 +36,8 @@ const env = local
     );
 
 const database = createDatabase(env.DATABASE_URL, { max: 10 });
+// Le code et la base doivent avoir les mêmes migrations (M11) : ni base en retard, ni base plus récente.
+await assertSchemaCurrent(database.db);
 const app = await buildApi({
   db: database.db,
   pool: database.pool,

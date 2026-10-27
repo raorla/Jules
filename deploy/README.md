@@ -1,6 +1,6 @@
-# Déployer Jules (M0)
+# Déployer Jules
 
-Ce guide met en service le gateway et le worker sur un hôte Linux, avec la GitHub App installée sur un repo bac à sable. À la fin, un commentaire `@jules` dans une issue reçoit un commentaire de statut.
+Ce guide met en service Jules sur un hôte Linux, avec la GitHub App installée sur un repo bac à sable. À la fin, un commentaire `@jules` dans une issue reçoit un commentaire de statut. La vue d'ensemble est dans le [guide d'administration](../docs/guide-admin.md).
 
 Ce qui tourne : `postgres`, `migrate` (une fois au démarrage), `gateway`, `worker`, et au choix `caddy` ou `cloudflared` pour exposer le gateway en TLS. Depuis M1, le worker lance un sandbox gVisor et un egress proxy par exécution.
 
@@ -25,13 +25,13 @@ Ce qui tourne : `postgres`, `migrate` (une fois au démarrage), `gateway`, `work
   sudo install -d -o 1000 -g 1000 -m 700 /var/lib/jules/runs
   ```
 
-## 2. Secrets locaux
+## 2. Installation en une commande
 
 ```bash
-deploy/install.sh
+sudo deploy/install.sh --domain jules.example.org --admins alice,bob --systemd
 ```
 
-Le script crée `deploy/secrets/` (mode 600, jamais versionné) : mot de passe PostgreSQL, secret de webhook, mot de passe restic et **clé maître**. Il crée aussi `deploy/.env` et `deploy/backup.env`.
+Le script vérifie l'hôte (Docker 28+, gVisor, dossier des exécutions), crée `deploy/secrets/` (mode 600, jamais versionné) : mot de passe PostgreSQL, secret de webhook, mot de passe restic et **clé maître**. Il crée `deploy/.env` et `deploy/backup.env`, y reporte les options données, construit les images, démarre la pile (sans le worker tant que la GitHub App n'est pas créée) et active les timers de sauvegarde (`--systemd`). Il est relançable : ce qui existe est gardé. `deploy/install.sh --help` liste les options ; `--no-start` prépare sans démarrer.
 
 Range tout de suite une copie de `jules_master_key` et de `restic_password` **hors de la machine** (gestionnaire de mots de passe ou papier), avec l'empreinte affichée. Sans la clé maître, les secrets d'une sauvegarde sont perdus. Sans le mot de passe restic, les sauvegardes sont illisibles.
 
@@ -156,12 +156,16 @@ Chaque semaine, et à chaque merge sur la branche par défaut, Jules audite les 
 
 ## 9. Sauvegardes
 
+Deux mécanismes, chiffrés par restic et envoyés hors de l'hôte (M11) :
+- **chaque nuit**, une copie logique (`pg_dump`, portable d'une version de PostgreSQL à l'autre) et une copie physique (`pg_basebackup`) ;
+- **en continu**, les WAL : PostgreSQL archive chaque segment dans le volume de la base au plus tard toutes les 5 minutes (`archive_timeout`), et `jules-wal.timer` les envoie toutes les 5 minutes. Perte maximale : environ 10 minutes.
+
 1. Renseigne le dépôt restic hors de l'hôte dans `deploy/backup.env` (S3, B2, SFTP…).
-2. Active la sauvegarde quotidienne :
+2. Active les deux timers (`install.sh --systemd` le fait) :
 
    ```bash
-   sudo cp deploy/systemd/jules-backup.* /etc/systemd/system/
-   sudo systemctl enable --now jules-backup.timer
+   sudo cp deploy/systemd/jules-backup.* deploy/systemd/jules-wal.* /etc/systemd/system/
+   sudo systemctl enable --now jules-backup.timer jules-wal.timer
    sudo systemctl start jules-backup.service   # première sauvegarde tout de suite
    ```
 
@@ -172,6 +176,17 @@ Chaque semaine, et à chaque merge sur la branche par défaut, Jules audite les 
    ```
 
    Le script restaure la dernière sauvegarde dans une base jetable. Il vérifie ensuite les migrations, la chaîne d'audit et le déchiffrement de chaque secret, puis supprime la base.
+
+4. **Revenir à un instant donné** (une erreur humaine, une montée de version ratée). L'instant est en UTC ; la restauration se fait dans un volume neuf, l'ancien reste intact :
+
+   ```bash
+   docker compose stop api gateway worker postgres
+   docker volume create jules_pgdata_restaure
+   docker compose --profile ops run --rm -v jules_pgdata_restaure:/var/lib/postgresql \
+     --entrypoint restore-pitr.sh backup '2026-10-27 14:30:00'
+   ```
+
+   Pointe ensuite le service `postgres` sur ce volume (`volumes:` de `compose.yaml`, ou renomme les volumes), puis `docker compose up -d` : PostgreSQL rejoue les WAL jusqu'à l'instant, puis reprend normalement. Vérifie avec `audit verify` et `secrets verify`, et fais une sauvegarde complète tout de suite (`systemctl start jules-backup.service`) : c'est le nouveau point de départ. La procédure est testée de bout en bout (`apps/worker/test/pitr.test.ts`).
 
 ## 10. Opérations courantes
 
@@ -185,6 +200,16 @@ Toutes les commandes passent par le CLI du worker : `docker compose run --rm wor
 | `master-key fingerprint` | affiche l'empreinte de la clé maître, à comparer avec la copie de secours |
 | `stop --all [--reason …]` | **arrêt d'urgence** : bloque tout nouveau démarrage, révoque les jetons, tue tous les sandboxes ; marche même si l'api est tombée |
 | `stop --lift` | lève l'arrêt d'urgence |
+| `migrate` | applique les migrations et affiche celles de la base ; l'api, le gateway et le worker refusent de démarrer sur une base en retard ou plus récente que leur code |
+| `audit self --osv https://api.osv.dev` | audit de Jules par ses propres scanners (secrets, dépendances, infra) ; code 1 si un finding critique ou haut est ouvert ou si un risque accepté a expiré (`security/exceptions.json`) |
+
+### Montée de version
+
+```bash
+deploy/upgrade.sh v1.0.1
+```
+
+Sauvegarde complète d'abord (sans elle, rien ne change), puis le code du tag, les images, l'arrêt du worker, de l'api et du gateway, les migrations (dans une transaction), le redémarrage, et enfin `audit verify` et `secrets verify`. Les webhooks reçus pendant l'arrêt sont rattrapés par la réconciliation. En cas d'échec, reviens au tag précédent et, si des migrations ont été appliquées, restaure l'instant d'avant (§9, étape 4).
 
 ### Rotation de la clé maître
 

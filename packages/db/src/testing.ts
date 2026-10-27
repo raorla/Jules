@@ -1,5 +1,9 @@
+import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { createDatabase, migrate, type Database } from "./client.js";
+import { migrate as runMigrations } from "drizzle-orm/node-postgres/migrator";
+import { MIGRATIONS_FOLDER, createDatabase, migrate, type Database, type Db } from "./client.js";
 
 // Une vraie base PostgreSQL par fichier de test (Testcontainers), migrée comme en production.
 
@@ -11,11 +15,15 @@ export type TestDatabase = Database & {
   stop(): Promise<void>;
 };
 
-export async function startTestDatabase(): Promise<TestDatabase> {
+export async function startTestDatabase(
+  options: { migrated?: boolean } = {},
+): Promise<TestDatabase> {
   const container = await new PostgreSqlContainer(POSTGRES_IMAGE).start();
   const url = container.getConnectionUri();
   const database = createDatabase(url, { max: 5 });
-  await migrate(database.db);
+  if (options.migrated ?? true) {
+    await migrate(database.db);
+  }
   return {
     ...database,
     container,
@@ -25,4 +33,21 @@ export async function startTestDatabase(): Promise<TestDatabase> {
       await container.stop();
     },
   };
+}
+
+/**
+ * Applique les migrations jusqu'à `tag` compris, comme une version publiée de Jules l'aurait fait :
+ * point de départ des tests de montée de version (M11).
+ */
+export async function migrateTo(db: Db, tag: string): Promise<void> {
+  const folder = mkdtempSync(join(tmpdir(), "jules-migrations-"));
+  cpSync(MIGRATIONS_FOLDER, folder, { recursive: true });
+  const path = join(folder, "meta", "_journal.json");
+  const journal = JSON.parse(readFileSync(path, "utf8")) as { entries: { tag: string }[] };
+  const index = journal.entries.findIndex((e) => e.tag === tag);
+  if (index < 0) {
+    throw new Error(`migration inconnue : ${tag}`);
+  }
+  writeFileSync(path, JSON.stringify({ ...journal, entries: journal.entries.slice(0, index + 1) }));
+  await runMigrations(db, { migrationsFolder: folder });
 }

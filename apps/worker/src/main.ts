@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_ORG_ID, createDatabase } from "@jules/db";
+import { DEFAULT_ORG_ID, assertSchemaCurrent, createDatabase } from "@jules/db";
 import { OctokitGitHubApp, type GitHubApp } from "@jules/forge";
 import { LocalForge } from "@jules/forge/local";
 import { SandboxDriver, parseAllowlist } from "@jules/sandbox";
@@ -30,6 +30,8 @@ const env = local ? loadLocalWorkerEnv() : loadWorkerEnv();
 const stopTracing = await startTracing(process.env);
 const log = createLogger(env.LOG_LEVEL);
 const database = createDatabase(env.DATABASE_URL);
+// Le code et la base doivent avoir les mêmes migrations (M11) : ni base en retard, ni base plus récente.
+await assertSchemaCurrent(database.db);
 
 // Les seuls secrets d'exécution vivent ici, chiffrés en base et déchiffrés en mémoire (ARCHITECTURE.md §5).
 const handoff =

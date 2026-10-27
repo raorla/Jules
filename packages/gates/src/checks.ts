@@ -42,12 +42,15 @@ const SECRET_PATTERNS: [string, RegExp][] = [
   ["jeton Slack", /\bxox[baprs]-[A-Za-z0-9-]{10,}/],
   ["clé Stripe", /\b(?:sk|rk)_live_[A-Za-z0-9]{20,}/],
   ["clé Google", /\bAIza[0-9A-Za-z_-]{35}\b/],
-  ["clé privée", /-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----/],
+  // Un en-tête qui ferme aussitôt sa chaîne (`placeholder="-----BEGIN … KEY-----"`) ne porte aucune clé.
+  ["clé privée", /-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----(?!["'`])/],
 ];
 const ASSIGNMENT =
   /(password|passwd|pwd|secret|api[_-]?key|access[_-]?key|token|private[_-]?key)["']?\s*[:=]\s*["']([^"'\s]{12,})["']/i;
 const PLACEHOLDER =
   /^(x+|\*+|changeme|example|placeholder|dummy|test|secret|password|<.*>|\$\{.*\}|\{\{.*\}\}|process\.env.*)$/i;
+/** Le nom d'un secret (`github_app_private_key`), pas sa valeur : des mots, sans chiffre. */
+const IDENTIFIER = /^[a-z]+(?:[_.-][a-z]+)+$/;
 
 export function entropy(text: string): number {
   const counts = new Map<string, number>();
@@ -75,7 +78,7 @@ export function scanSecrets(files: readonly FileDiff[]): SecretFinding[] {
       }
       const assignment = ASSIGNMENT.exec(added.text);
       const value = assignment?.[2];
-      if (value && !PLACEHOLDER.test(value) && entropy(value) >= 3.5) {
+      if (value && !PLACEHOLDER.test(value) && !IDENTIFIER.test(value) && entropy(value) >= 3.5) {
         findings.push({
           path: file.path,
           line: added.line,

@@ -25,6 +25,11 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await t.db.execute(sql`truncate outbox, stops cascade`);
+  // Chaque test part de ses propres tâches : celles laissées en cours par les précédents (en
+  // vérification, en attente de reprise) ne doivent pas occuper l'orchestrateur.
+  await t.db.execute(
+    sql`update tasks set state = 'cancelled' where state not in ('done', 'cancelled')`,
+  );
   await model?.close();
   model = undefined;
 });
@@ -121,15 +126,6 @@ describe.each(["github", "local"] as const)("M1 : sécurité du sandbox (forge %
     forge === "local" ? localSandboxSetup(t.db, fake) : sandboxSetup(t.db, fake);
   const seed = (s: ReturnType<typeof setup>) =>
     seedTask(t.db, "path" in s ? { localPath: s.path } : {});
-  afterAll(async () => {
-    // Les tâches laissées par la variante locale ne doivent pas occuper l'orchestrateur des tests
-    // suivants, qui n'a que la forge GitHub.
-    if (forge === "local") {
-      await t.db.execute(
-        sql`update tasks set state = 'cancelled' where repo_id in (select id from repos where forge = 'local')`,
-      );
-    }
-  });
 
   it("aucune variable ni aucun fichier du sandbox ne contient le jeton GitHub ou la clé API", async () => {
     model = await startFakeModel(HAPPY);
