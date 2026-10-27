@@ -1,0 +1,9 @@
+# Seule la route des webhooks est exposée ; tout le reste répond 404.
+{$JULES_DOMAIN} {
+	handle /webhooks/github {
+		reverse_proxy gateway:3000
+	}
+	handle {
+		respond 404
+	}
+}

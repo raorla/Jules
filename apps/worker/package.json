@@ -1,0 +1,36 @@
+{
+  "name": "@jules/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "jules": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "start": "node dist/main.js",
+    "dev": "tsx watch --conditions=@jules/source src/main.ts"
+  },
+  "dependencies": {
+    "@jules/audit": "workspace:*",
+    "@jules/config": "workspace:*",
+    "@jules/db": "workspace:*",
+    "@jules/forge": "workspace:*",
+    "@jules/secrets": "workspace:*",
+    "pg": "8.23.1",
+    "pino": "10.4.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@jules/gateway": "workspace:*",
+    "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "typescript": "6.0.3",
+    "vitest": "5.0.5"
+  }
+}

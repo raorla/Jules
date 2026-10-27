@@ -1,0 +1,9 @@
+[Unit]
+Description=Sauvegarde chiffrée de Jules (restic)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/jules/deploy
+ExecStart=/usr/bin/docker compose --profile ops run --rm backup

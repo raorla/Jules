@@ -1,0 +1,120 @@
+# Déploiement serveur de Jules (ROADMAP M0). Voir deploy/README.md.
+name: jules
+
+x-hardening: &hardening
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: jules
+      POSTGRES_USER: jules
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes: [pgdata:/var/lib/postgresql]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jules -d jules"]
+      interval: 5s
+      retries: 10
+    networks: [db]
+    restart: unless-stopped
+
+  migrate:
+    image: jules-worker:${JULES_VERSION:-local}
+    build: { context: .., dockerfile: deploy/Dockerfile, target: worker }
+    command: ["node", "dist/cli.js", "migrate"]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+    secrets: [database_url]
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [db]
+    <<: *hardening
+    restart: "no"
+
+  gateway:
+    image: jules-gateway:${JULES_VERSION:-local}
+    build: { context: .., dockerfile: deploy/Dockerfile, target: gateway }
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      GITHUB_WEBHOOK_SECRET_FILE: /run/secrets/github_webhook_secret
+    # Le gateway ne reçoit que le secret de webhook (ARCHITECTURE.md §5).
+    secrets: [database_url, github_webhook_secret]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [db, edge]
+    <<: *hardening
+
+  worker:
+    image: jules-worker:${JULES_VERSION:-local}
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      JULES_MASTER_KEY_FILE: /run/secrets/jules_master_key
+      GITHUB_APP_ID: ${GITHUB_APP_ID:?GITHUB_APP_ID manquant dans deploy/.env}
+      JULES_MENTION: ${JULES_MENTION:-@jules}
+      JULES_LANGUAGE: ${JULES_LANGUAGE:-fr}
+    secrets: [database_url, jules_master_key]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    # `egress` : sortie vers api.github.com. Le worker n'est joignable par aucun autre service.
+    networks: [db, egress]
+    <<: *hardening
+
+  # Exposition du gateway en TLS : Caddy (domaine public) ou Cloudflare Tunnel (aucun port ouvert).
+  caddy:
+    image: caddy:2.11.7-alpine
+    profiles: [caddy]
+    environment:
+      JULES_DOMAIN: ${JULES_DOMAIN:-}
+    ports: ["443:443", "80:80"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    networks: [edge]
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.4
+    profiles: [tunnel]
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    networks: [edge]
+    restart: unless-stopped
+
+  # Sauvegarde quotidienne chiffrée hors de l'hôte (restic). Lancée par deploy/systemd/jules-backup.timer.
+  backup:
+    image: jules-backup:${JULES_VERSION:-local}
+    build: { context: ./backup }
+    profiles: [ops]
+    env_file: [./backup.env]
+    environment:
+      PGHOST: postgres
+      PGUSER: jules
+      PGDATABASE: jules
+      PGPASSFILE: /tmp/pgpass
+      RESTIC_PASSWORD_FILE: /run/secrets/restic_password
+    secrets: [postgres_password, restic_password]
+    networks: [db, egress]
+    restart: "no"
+
+networks:
+  db: { internal: true }
+  edge: {}
+  egress: {}
+
+volumes:
+  pgdata: {}
+  caddy_data: {}
+
+secrets:
+  postgres_password: { file: ./secrets/postgres_password }
+  database_url: { file: ./secrets/database_url }
+  github_webhook_secret: { file: ./secrets/github_webhook_secret }
+  jules_master_key: { file: ./secrets/jules_master_key }
+  restic_password: { file: ./secrets/restic_password }

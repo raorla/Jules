@@ -1,0 +1,31 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    "helpers:pinGitHubActionDigests",
+    "docker:pinDigests"
+  ],
+  "rangeStrategy": "pin",
+  "lockFileMaintenance": { "enabled": true },
+  "packageRules": [
+    {
+      "description": "typescript-eslint suit TypeScript avec retard : TypeScript 7 attendra son support.",
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<6.1"
+    },
+    {
+      "description": "Node 24 LTS : les types suivent la version majeure du runtime.",
+      "matchPackageNames": ["@types/node"],
+      "allowedVersions": "<25"
+    },
+    {
+      "matchPackageNames": ["/^@vitest//", "vitest"],
+      "groupName": "vitest"
+    },
+    {
+      "matchPackageNames": ["/^drizzle-/"],
+      "groupName": "drizzle"
+    }
+  ]
+}
