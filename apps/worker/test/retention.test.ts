@@ -1,10 +1,11 @@
 import { mkdirSync, mkdtempSync, utimesSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { DEFAULT_ORG_ID, eq, events, outbox } from "@jules/db";
 import { startTestDatabase, type TestDatabase } from "@jules/db/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { compareEvals, scoreTask } from "../src/evals.js";
+import { compareEvals, loadSuite, scoreTask } from "../src/evals.js";
 import { TRANSCRIPTS_DIR, purgeExpired } from "../src/retention.js";
 
 let t: TestDatabase;
@@ -84,6 +85,23 @@ describe("rétention (ARCHITECTURE.md §18)", () => {
     expect(existsSync(join(runsDir, "pending-run"))).toBe(true);
     expect(existsSync(join(runsDir, "fresh-run"))).toBe(true);
     expect(existsSync(join(runsDir, TRANSCRIPTS_DIR, "new.jsonl"))).toBe(true);
+  });
+});
+
+describe("suite d'evals livrée", () => {
+  it("se charge, et chaque fixture déclare la commande de test que rejouent les gates", () => {
+    const suite = fileURLToPath(new URL("../../../evals", import.meta.url));
+    const loaded = loadSuite(suite);
+    expect(loaded.map((task) => task.id)).toEqual([
+      "average-empty",
+      "mul",
+      "readme-sum",
+      "round-half",
+      "sum-strings",
+    ]);
+    for (const task of loaded) {
+      expect(existsSync(join(suite, task.fixture, ".jules", "config.yml")), task.id).toBe(true);
+    }
   });
 });
 

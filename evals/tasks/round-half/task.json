@@ -1,0 +1,9 @@
+{
+  "id": "round-half",
+  "fixture": "fixtures/node-bugs",
+  "type": "bug",
+  "issue": {
+    "title": "roundTo arrondit mal certains nombres",
+    "body": "@jules `roundTo(1.005, 2)` renvoie `1` au lieu de `1.01`, et `roundTo(4.015, 2)` renvoie `4.01` au lieu de `4.02`. Attendu : l'arrondi au plus proche tel qu'on l'écrit en décimal, les demis vers le haut, pour tous les nombres et pas seulement ces deux-là. Reproduction : `node -e 'import(\"./src/stats.js\").then(m => console.log(m.roundTo(1.005, 2)))'` affiche `1`."
+  }
+}

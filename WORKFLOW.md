@@ -429,7 +429,7 @@ Chaque commit porte le trailer `Jules-Task: <id>`. Pour remonter d'une ligne de 
 
 Jules doit suivre les mêmes règles que celles qu'il impose.
 
-- **Prompts versionnés** : les prompts sont dans `prompts/<rôle>/vN.md`, et chaque artefact enregistre la version qui l'a produit.
+- **Prompts versionnés** : les prompts sont dans `prompts/<rôle>/vN.md`, et chaque artefact enregistre la version qui l'a produit. Le worker prend la plus haute version du rôle : un changement de prompt s'ajoute en `vN+1.md` à côté de l'ancien, qui reste pour comparer et revenir en arrière.
 - **Suite d'evals** : 15 à 30 tâches réelles tirées de tes repos. Chaque tâche comprend l'issue, l'état du repo avant, et la PR mergée de référence. Le score combine :
   - les gates vertes ;
   - les critères couverts ;

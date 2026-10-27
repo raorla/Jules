@@ -7,7 +7,7 @@ Un changement de prompt, de modèle, d'effort ou de règle passe la suite d'eval
 - `fixtures/<nom>/` : l'état d'un repo avant la tâche, copié comme premier commit de `main`.
 - `tasks/<id>/task.json` : la tâche (`id`, `fixture`, `type`, `issue.title`, `issue.body`).
 
-Les trois tâches livrées (`mul`, `sum-strings`, `readme-sum`) servent d'exemple et de test. La vraie suite, c'est 15 à 30 tâches tirées de tes repos, déjà mergées : pour chacune, copie l'état du repo avant le merge dans `fixtures/`, et l'issue d'origine dans `tasks/`.
+Les cinq tâches livrées servent d'exemple et de test : trois fonctionnalités sur `node-basic` (`mul`, `sum-strings`, `readme-sum`) et deux bugs sur `node-bugs` (`average-empty`, `round-half`), qui mesurent la boucle de diagnostic du développeur (reproduire par un test qui échoue, puis corriger la cause). La vraie suite, c'est 15 à 30 tâches tirées de tes repos, déjà mergées : pour chacune, copie l'état du repo avant le merge dans `fixtures/`, et l'issue d'origine dans `tasks/`.
 
 ## Score
 

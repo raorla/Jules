@@ -1,0 +1,9 @@
+{
+  "id": "average-empty",
+  "fixture": "fixtures/node-bugs",
+  "type": "bug",
+  "issue": {
+    "title": "average renvoie NaN pour une liste vide",
+    "body": "@jules `average([])` renvoie `NaN`, ce qui casse les totaux en aval. Attendu : `0` pour une liste vide ; le reste ne change pas. Reproduction : `node -e 'import(\"./src/stats.js\").then(m => console.log(m.average([])))'` affiche `NaN`."
+  }
+}

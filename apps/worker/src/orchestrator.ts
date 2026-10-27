@@ -65,6 +65,7 @@ import type { Logger } from "pino";
 import type { Masker } from "./broker/masking.js";
 import type { ModelCredential } from "./broker/model-proxy.js";
 import { startBroker } from "./broker/server.js";
+import { latestPromptVersion } from "./prompts.js";
 import { issueRunToken } from "./broker/tokens.js";
 import { isStopped } from "./controls.js";
 import { enqueueEffect } from "./outbox.js";
@@ -630,7 +631,8 @@ export class Orchestrator {
     }
 
     const { token, hash } = issueRunToken();
-    const promptVersion = `${role}/v1`;
+    const version = await latestPromptVersion(config.promptsDir, role);
+    const promptVersion = `${role}/v${version}`;
     const runBudget = Math.min(settings.budgetUsd, remaining);
     const [run] = await db
       .insert(runs)
@@ -718,7 +720,7 @@ export class Orchestrator {
 
       // 2. Contexte de l'exécution, puis broker sur un socket Unix propre à l'exécution.
       const [template, common] = await Promise.all([
-        readFile(join(config.promptsDir, role, "v1.md"), "utf8"),
+        readFile(join(config.promptsDir, role, `v${version}.md`), "utf8"),
         readFile(join(config.promptsDir, "_common.md"), "utf8"),
       ]);
       const context: RunContext = {

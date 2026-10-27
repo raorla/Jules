@@ -9,6 +9,9 @@ export default tseslint.config(
       "**/migrations/**",
       "**/test-results/**",
       "**/playwright-report/**",
+      // Sorties de build du shell Tauri (JS généré, ressources binaires).
+      "**/src-tauri/target/**",
+      "**/src-tauri/gen/**",
     ],
   },
   js.configs.recommended,

@@ -6,6 +6,7 @@ import { startTestDatabase, type TestDatabase } from "@jules/db/testing";
 import pino from "pino";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { compareEvals, runEvals } from "../src/evals.js";
+import { latestPromptVersion } from "../src/prompts.js";
 import { drainEvents } from "../src/inbox.js";
 import { drainOutbox } from "../src/outbox.js";
 import { startFakeModel, type FakeModel, type Scripts, type Step } from "./fake-model.js";
@@ -125,9 +126,11 @@ describe("M5 : evals", () => {
     cpSync(join(ROOT, "evals", "tasks", "mul"), join(suite, "tasks", "mul"), { recursive: true });
     const candidate = mkdtempSync(join(tmpdir(), "jules-prompts-"));
     cpSync(join(ROOT, "prompts"), candidate, { recursive: true });
+    // Un changement de prompt est une nouvelle version, que le worker prend parce qu'elle est la plus haute.
+    const current = await latestPromptVersion(candidate, "developer");
     writeFileSync(
-      join(candidate, "developer", "v1.md"),
-      `${readFileSync(join(candidate, "developer", "v1.md"), "utf8")}\nMARQUEUR-EVAL-REGRESSION\n`,
+      join(candidate, "developer", `v${current + 1}.md`),
+      `${readFileSync(join(candidate, "developer", `v${current}.md`), "utf8")}\nMARQUEUR-EVAL-REGRESSION\n`,
     );
     const s = sandboxSetup(t.db, model);
     const config = {
