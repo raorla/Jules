@@ -17,16 +17,21 @@
     "dev": "tsx watch --conditions=@jules/source src/main.ts"
   },
   "dependencies": {
+    "@jules/artifacts": "workspace:*",
     "@jules/audit": "workspace:*",
     "@jules/config": "workspace:*",
     "@jules/db": "workspace:*",
     "@jules/forge": "workspace:*",
+    "@jules/policy": "workspace:*",
+    "@jules/sandbox": "workspace:*",
     "@jules/secrets": "workspace:*",
+    "fastify": "5.12.7",
     "pg": "8.23.1",
     "pino": "10.4.0",
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@jules/agent-runner": "workspace:*",
     "@jules/gateway": "workspace:*",
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",

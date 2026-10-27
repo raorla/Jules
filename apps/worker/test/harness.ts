@@ -44,3 +44,49 @@ export async function eventually<T>(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
+
+/** Une tâche prête à exécuter, sur un repo et une installation de test. */
+export async function seedTask(db: Db, overrides: { issueNumber?: number } = {}) {
+  const { installations, repos, tasks } = await import("@jules/db");
+  const [installation] = await db
+    .insert(installations)
+    .values({
+      orgId: DEFAULT_ORG_ID,
+      githubInstallationId: 4242,
+      accountLogin: "acme",
+      accountType: "Organization",
+    })
+    .onConflictDoUpdate({
+      target: installations.githubInstallationId,
+      set: { accountLogin: "acme" },
+    })
+    .returning();
+  const [repo] = await db
+    .insert(repos)
+    .values({
+      orgId: DEFAULT_ORG_ID,
+      forge: "github",
+      installationId: installation!.id,
+      githubRepoId: 99,
+      fullName: "acme/sandbox",
+      defaultBranch: "main",
+      private: true,
+    })
+    .onConflictDoUpdate({
+      target: [repos.forge, repos.githubRepoId],
+      set: { fullName: "acme/sandbox" },
+    })
+    .returning();
+  const [task] = await db
+    .insert(tasks)
+    .values({
+      orgId: DEFAULT_ORG_ID,
+      repoId: repo!.id,
+      agent: "developer",
+      issueNumber: overrides.issueNumber ?? Math.floor(Math.random() * 1e6),
+      title: "Ajouter /healthz",
+      request: "@jules ajoute un endpoint /healthz",
+    })
+    .returning();
+  return { installation: installation!, repo: repo!, task: task! };
+}

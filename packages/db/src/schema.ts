@@ -153,7 +153,13 @@ export const tasks = pgTable(
     reviewRounds: integer("review_rounds").notNull().default(0),
     costUsd: numeric("cost_usd", { precision: 12, scale: 4 }).notNull().default("0"),
     branch: text("branch"),
+    baseSha: text("base_sha"),
+    headSha: text("head_sha"),
     prNumber: integer("pr_number"),
+    budgetUsd: numeric("budget_usd", { precision: 12, scale: 4 }),
+    /** En `waiting_provider` : date de la prochaine tentative (ARCHITECTURE.md §17). */
+    resumeAfter: timestamp("resume_after", { withTimezone: true }),
+    lastError: text("last_error"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -243,4 +249,112 @@ export const secrets = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [uniqueIndex("secrets_org_name_idx").on(t.orgId, t.name)],
+);
+
+export const RUN_STATUSES = [
+  "starting",
+  "running",
+  "succeeded",
+  "failed",
+  "timeout",
+  "budget_exceeded",
+  "stopped",
+  "provider_unavailable",
+] as const;
+export type RunStatus = (typeof RUN_STATUSES)[number];
+
+/** Une exécution d'agent dans un sandbox. Le jeton d'exécution n'est stocké que haché. */
+export const runs = pgTable(
+  "runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    role: text("role").notNull(),
+    model: text("model").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    status: text("status", { enum: RUN_STATUSES }).notNull().default("starting"),
+    tokenHash: text("token_hash").notNull().unique(),
+    tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    containerId: text("container_id"),
+    budgetUsd: numeric("budget_usd", { precision: 12, scale: 4 }).notNull(),
+    costUsd: numeric("cost_usd", { precision: 12, scale: 6 }).notNull().default("0"),
+    inputTokens: bigint("input_tokens", { mode: "number" }).notNull().default(0),
+    outputTokens: bigint("output_tokens", { mode: "number" }).notNull().default(0),
+    cacheReadTokens: bigint("cache_read_tokens", { mode: "number" }).notNull().default(0),
+    cacheWriteTokens: bigint("cache_write_tokens", { mode: "number" }).notNull().default(0),
+    modelRequests: integer("model_requests").notNull().default(0),
+    providerErrors: integer("provider_errors").notNull().default(0),
+    result: jsonb("result"),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("runs_task_idx").on(t.taskId, t.createdAt)],
+);
+
+/** Appels d'outils `jules` : entrée masquée et tronquée, décision de la policy, durée. */
+export const toolCalls = pgTable(
+  "tool_calls",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => runs.id),
+    capability: text("capability").notNull(),
+    input: jsonb("input").notNull(),
+    effect: text("effect", { enum: ["allow", "deny", "require_approval"] }).notNull(),
+    ruleId: text("rule_id").notNull(),
+    reason: text("reason").notNull(),
+    output: text("output"),
+    durationMs: integer("duration_ms"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("tool_calls_run_idx").on(t.runId, t.capability)],
+);
+
+/** Artefacts typés de chaque phase (WORKFLOW.md §6), versionnés. */
+export const artifacts = pgTable(
+  "artifacts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    runId: uuid("run_id").references(() => runs.id),
+    kind: text("kind").notNull(),
+    version: integer("version").notNull(),
+    content: jsonb("content").notNull(),
+    model: text("model"),
+    promptVersion: text("prompt_version"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("artifacts_task_kind_version_idx").on(t.taskId, t.kind, t.version)],
+);
+
+/** Arrêts d'urgence (§17) : actifs tant que `lifted_at` est vide. */
+export const stops = pgTable(
+  "stops",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    scope: text("scope", { enum: ["global", "repo", "server"] }).notNull(),
+    targetId: text("target_id"),
+    reason: text("reason").notNull(),
+    setBy: text("set_by").notNull(),
+    setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
+    liftedAt: timestamp("lifted_at", { withTimezone: true }),
+    liftedBy: text("lifted_by"),
+  },
+  (t) => [
+    index("stops_active_idx")
+      .on(t.orgId, t.scope)
+      .where(sql`${t.liftedAt} is null`),
+  ],
 );
