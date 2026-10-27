@@ -10,7 +10,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use crate::engine::{parse_docker_info, parse_podman_info, Engine, EngineKind, DOCKER_INFO_FORMAT, PODMAN_INFO_FORMAT};
-use crate::handoff::{random_master_key, serve_once, HandoffError, Secrets};
+use crate::handoff::{random_master_key, serve_once, HandoffError, ModelAccess, Secrets};
 use crate::pkce::random_token;
 use crate::stack::{compose_command, compose_env, compose_failure, daemon_path, login_hash, StackConfig, PROJECT};
 use crate::stepup;
@@ -18,9 +18,11 @@ use crate::stepup;
 pub const LOCAL_API_PORT: u16 = 43117;
 pub const MASTER_KEY_ENTRY: &str = "local:master-key";
 pub const LOGIN_ENTRY: &str = "local:login-secret";
-/// Clé API du fournisseur de modèle, saisie dans l'app : en mode local, elle ne passe ni par la base
-/// ni par une passkey (la webview Linux n'en gère pas), seulement par le trousseau et la remise.
+/// Accès au modèle saisi dans l'app, une clé API ou le jeton d'un abonnement Claude, un seul à la
+/// fois : en mode local, il ne passe ni par la base ni par une passkey, seulement par le trousseau et
+/// la remise au worker.
 pub const API_KEY_ENTRY: &str = "local:anthropic-api-key";
+pub const SUBSCRIPTION_ENTRY: &str = "local:claude-subscription-token";
 /// Graine Ed25519 des confirmations du mode local (`stepup`) : jamais remise à la page ni au worker.
 pub const STEP_UP_KEY_ENTRY: &str = "local:step-up-key";
 const HANDOFF_TIMEOUT: Duration = Duration::from_secs(180);
@@ -29,6 +31,8 @@ const HANDOFF_TIMEOUT: Duration = Duration::from_secs(180);
 pub trait Vault {
     fn get(&self, name: &str) -> Result<Option<String>, String>;
     fn set(&self, name: &str, value: &str) -> Result<(), String>;
+    /// Efface une entrée ; une entrée absente n'est pas une erreur.
+    fn delete(&self, name: &str) -> Result<(), String>;
 
     /// Secret tiré au premier usage, puis toujours relu du trousseau.
     fn get_or_create(&self, name: &str, create: fn() -> String) -> Result<String, String> {
@@ -112,13 +116,63 @@ pub fn status() -> Status {
     Status { engine, running }
 }
 
-/// Clé API saisie dans l'app : une seule ligne, sans espace, de taille raisonnable.
-pub fn api_key(raw: &str) -> Result<String, String> {
-    let key = raw.trim();
-    if !(20..=512).contains(&key.len()) || !key.chars().all(|c| c.is_ascii_graphic()) {
-        return Err("clé API invalide : une seule ligne, sans espace".into());
+/// Façon d'appeler le modèle, choisie dans l'app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessKind {
+    ApiKey,
+    Subscription,
+}
+
+impl AccessKind {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "api_key" => Some(Self::ApiKey),
+            "subscription" => Some(Self::Subscription),
+            _ => None,
+        }
     }
-    Ok(key.to_string())
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ApiKey => "api_key",
+            Self::Subscription => "subscription",
+        }
+    }
+}
+
+/// Accès saisi dans l'app : une seule ligne, sans espace, de taille raisonnable ; et une clé API
+/// n'est pas un jeton d'abonnement, ni l'inverse (préfixes `sk-ant-api` et `sk-ant-oat`).
+pub fn model_secret(kind: AccessKind, raw: &str) -> Result<String, String> {
+    let value = raw.trim();
+    if !(20..=512).contains(&value.len()) || !value.chars().all(|c| c.is_ascii_graphic()) {
+        return Err("accès invalide : une seule ligne, sans espace".into());
+    }
+    match kind {
+        AccessKind::ApiKey if value.starts_with("sk-ant-oat") => {
+            Err("c'est un jeton d'abonnement : choisis « Abonnement Claude »".into())
+        }
+        AccessKind::Subscription if value.starts_with("sk-ant-api") => Err("c'est une clé API : choisis « Clé API »".into()),
+        _ => Ok(value.to_string()),
+    }
+}
+
+/// L'accès rangé dans le trousseau, s'il y en a un.
+pub fn model_access(vault: &dyn Vault) -> Result<Option<ModelAccess>, String> {
+    if let Some(token) = vault.get(SUBSCRIPTION_ENTRY)? {
+        return Ok(Some(ModelAccess::Subscription(token)));
+    }
+    Ok(vault.get(API_KEY_ENTRY)?.map(ModelAccess::ApiKey))
+}
+
+/// Range l'accès choisi et efface l'autre : le worker n'en reçoit jamais deux.
+pub fn set_model_access(vault: &dyn Vault, kind: AccessKind, raw: &str) -> Result<(), String> {
+    let value = model_secret(kind, raw)?;
+    let (keep, other) = match kind {
+        AccessKind::ApiKey => (API_KEY_ENTRY, SUBSCRIPTION_ENTRY),
+        AccessKind::Subscription => (SUBSCRIPTION_ENTRY, API_KEY_ENTRY),
+    };
+    vault.set(keep, &value)?;
+    vault.delete(other)
 }
 
 fn private_dir(path: &Path) -> Result<(), String> {
@@ -179,7 +233,7 @@ pub fn start(paths: &LocalPaths, vault: &dyn Vault, version: &str, recreate_work
     if !recreate_worker && healthy(LOCAL_API_PORT) && worker_running(engine.kind) {
         return Ok(Status { engine: Some(engine), running: true });
     }
-    let api_key = vault.get(API_KEY_ENTRY)?.ok_or("clé API du fournisseur absente du trousseau")?;
+    let access = model_access(vault)?.ok_or("aucun accès au modèle dans le trousseau : clé API ou abonnement Claude")?;
     let master_key = vault.get_or_create(MASTER_KEY_ENTRY, random_master_key)?;
     let login_secret = vault.get_or_create(LOGIN_ENTRY, || random_token(32))?;
     let step_up_public_key = stepup::public_key(&vault.get_or_create(STEP_UP_KEY_ENTRY, stepup::random_seed)?)?;
@@ -188,7 +242,7 @@ pub fn start(paths: &LocalPaths, vault: &dyn Vault, version: &str, recreate_work
     let handoff_dir = paths.runtime.as_ref().map_or_else(|| paths.data.join("handoff"), |d| d.join("jules"));
     private_dir(&handoff_dir)?;
     let token = random_token(32);
-    let secrets = Secrets { master_key, previous_keys: vec![], anthropic_api_key: Some(api_key) };
+    let secrets = Secrets { master_key, previous_keys: vec![], model_access: Some(access) };
     let (handoff_url, server) = handoff_server(&engine, &handoff_dir, &token, secrets)?;
 
     #[cfg(unix)]
@@ -280,6 +334,10 @@ mod tests {
             self.0.borrow_mut().insert(name.into(), value.into());
             Ok(())
         }
+        fn delete(&self, name: &str) -> Result<(), String> {
+            self.0.borrow_mut().remove(name);
+            Ok(())
+        }
     }
 
     #[test]
@@ -312,14 +370,39 @@ mod tests {
     }
 
     #[test]
-    fn api_keys_are_one_line_without_spaces() {
+    fn model_secrets_are_one_line_and_of_the_chosen_kind() {
         let key = format!("sk-ant-api03-{}", "a".repeat(40));
-        assert_eq!(api_key(&format!("  {key}\n")), Ok(key.clone()));
-        assert!(api_key("trop-courte").is_err());
-        assert!(api_key(&format!("{key} {key}")).is_err());
-        assert!(api_key(&format!("{key}\n{key}")).is_err());
-        assert!(api_key(&"a".repeat(513)).is_err());
-        assert!(api_key("clé-avec-des-accents-é-0123456789").is_err());
+        let token = format!("sk-ant-oat01-{}", "b".repeat(40));
+        assert_eq!(model_secret(AccessKind::ApiKey, &format!("  {key}\n")), Ok(key.clone()));
+        assert_eq!(model_secret(AccessKind::Subscription, &token), Ok(token.clone()));
+        assert!(model_secret(AccessKind::ApiKey, "trop-courte").is_err());
+        assert!(model_secret(AccessKind::ApiKey, &format!("{key} {key}")).is_err());
+        assert!(model_secret(AccessKind::ApiKey, &format!("{key}\n{key}")).is_err());
+        assert!(model_secret(AccessKind::ApiKey, &"a".repeat(513)).is_err());
+        assert!(model_secret(AccessKind::ApiKey, "clé-avec-des-accents-é-0123456789").is_err());
+        // Collé dans la mauvaise case : l'app le dit.
+        assert!(model_secret(AccessKind::ApiKey, &token).unwrap_err().contains("Abonnement Claude"));
+        assert!(model_secret(AccessKind::Subscription, &key).unwrap_err().contains("Clé API"));
+        assert_eq!(AccessKind::parse("subscription"), Some(AccessKind::Subscription));
+        assert_eq!(AccessKind::parse(AccessKind::ApiKey.as_str()), Some(AccessKind::ApiKey));
+        assert_eq!(AccessKind::parse("autre"), None);
+    }
+
+    #[test]
+    fn one_model_access_at_a_time() {
+        let vault = MemoryVault::default();
+        assert_eq!(model_access(&vault), Ok(None));
+        let key = format!("sk-ant-api03-{}", "a".repeat(40));
+        let token = format!("sk-ant-oat01-{}", "b".repeat(40));
+        set_model_access(&vault, AccessKind::ApiKey, &key).unwrap();
+        assert_eq!(model_access(&vault), Ok(Some(ModelAccess::ApiKey(key.clone()))));
+        set_model_access(&vault, AccessKind::Subscription, &token).unwrap();
+        assert_eq!(model_access(&vault), Ok(Some(ModelAccess::Subscription(token))));
+        assert_eq!(vault.get(API_KEY_ENTRY), Ok(None));
+        set_model_access(&vault, AccessKind::ApiKey, &key).unwrap();
+        assert_eq!(vault.get(SUBSCRIPTION_ENTRY), Ok(None));
+        assert!(set_model_access(&vault, AccessKind::Subscription, "court").is_err());
+        assert_eq!(model_access(&vault), Ok(Some(ModelAccess::ApiKey(key))));
     }
 
     #[test]
@@ -338,12 +421,12 @@ mod tests {
         private_dir(&dir).unwrap();
         assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
         let engine = parse_docker_info("28.5.1\nUbuntu\nrunc runsc\n").unwrap();
-        let secrets = Secrets { master_key: random_master_key(), previous_keys: vec![], anthropic_api_key: None };
+        let secrets = Secrets { master_key: random_master_key(), previous_keys: vec![], model_access: None };
         let (url, server) = handoff_server(&engine, &dir, "jeton", secrets).unwrap();
         let name = url.strip_prefix("unix:/run/jules/handoff/").unwrap();
         assert!(name.starts_with("handoff-") && name.ends_with(".sock"), "{url}");
         // L'essai suivant a son propre socket.
-        let other = Secrets { master_key: random_master_key(), previous_keys: vec![], anthropic_api_key: None };
+        let other = Secrets { master_key: random_master_key(), previous_keys: vec![], model_access: None };
         let (next, _) = handoff_server(&engine, &dir, "autre", other).unwrap();
         assert_ne!(next, url);
         let mut stream = std::os::unix::net::UnixStream::connect(dir.join(name)).unwrap();

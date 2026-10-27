@@ -101,7 +101,7 @@ function orchestratorFor(
     github,
     driver,
     log,
-    masker: new Masker([API_KEY]),
+    masker: new Masker([API_KEY, ...(overrides.model ? [overrides.model.credential.secret] : [])]),
     ...extra,
     config: {
       runsDir,
@@ -109,7 +109,7 @@ function orchestratorFor(
       sandboxImage: TEST_IMAGES.sandbox,
       egressAllow: ["registry.npmjs.org"],
       language: "fr",
-      model: { upstream: model.url, apiKey: API_KEY },
+      model: { upstream: model.url, credential: { kind: "api_key", secret: API_KEY } },
       developer: {
         model: "claude-opus-5-5",
         effort: "high",

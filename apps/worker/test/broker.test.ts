@@ -9,15 +9,21 @@ import { startTestDatabase, type TestDatabase } from "@jules/db/testing";
 import pino from "pino";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { Masker } from "../src/broker/masking.js";
+import {
+  credentialHeaders,
+  retryAfterMs,
+  type ModelCredential,
+} from "../src/broker/model-proxy.js";
 import { startBroker, type Broker } from "../src/broker/server.js";
 import { issueRunToken } from "../src/broker/tokens.js";
 import { seedTask } from "./harness.js";
 
 const API_KEY = "sk-ant-api-cle-reelle-du-worker-0123456789";
+const SUBSCRIPTION = ["sk-ant-oat01", "jeton-d-abonnement-du-worker", "0123456789"].join("-");
 let t: TestDatabase;
 let upstream: Server;
 let upstreamUrl: string;
-let upstreamMode: "stream" | "overloaded" = "stream";
+let upstreamMode: "stream" | "overloaded" | "limited" = "stream";
 const upstreamSeen: { headers: IncomingMessage["headers"]; body: string }[] = [];
 
 beforeAll(async () => {
@@ -27,6 +33,12 @@ beforeAll(async () => {
     req.on("data", (c: Buffer) => (body += c.toString()));
     req.on("end", () => {
       upstreamSeen.push({ headers: req.headers, body });
+      if (upstreamMode === "limited") {
+        res
+          .writeHead(429, { "content-type": "application/json", "retry-after": "3600" })
+          .end('{"type":"error","error":{"type":"rate_limit_error","message":"x"}}');
+        return;
+      }
       if (upstreamMode === "overloaded") {
         res
           .writeHead(529, { "content-type": "application/json" })
@@ -59,8 +71,13 @@ let token: string;
 let runId: string;
 let taskId: string;
 const budgetHits: string[] = [];
+const outages: string[] = [];
+const announced: { runId: string; retryAfterMs: number }[] = [];
 
-async function startRun(budgetUsd = "10") {
+async function startRun(
+  budgetUsd = "10",
+  credential: ModelCredential = { kind: "api_key", secret: API_KEY },
+) {
   const { task } = await seedTask(t.db);
   taskId = task.id;
   const issued = issueRunToken();
@@ -85,9 +102,11 @@ async function startRun(budgetUsd = "10") {
     {
       db: t.db,
       log: pino({ level: "silent" }),
-      masker: new Masker([API_KEY]),
-      model: { upstream: upstreamUrl, apiKey: API_KEY },
+      masker: new Masker([API_KEY, credential.secret]),
+      model: { upstream: upstreamUrl, credential },
       onBudgetExceeded: (id) => budgetHits.push(id),
+      onProviderOutage: (id) => outages.push(id),
+      onRetryAfter: (id, retryAfterMs) => announced.push({ runId: id, retryAfterMs }),
     },
     { runId, socketPath },
   );
@@ -97,6 +116,8 @@ beforeEach(async () => {
   upstreamMode = "stream";
   upstreamSeen.length = 0;
   budgetHits.length = 0;
+  outages.length = 0;
+  announced.length = 0;
   await t.db.delete(stops);
   await startRun();
 });
@@ -246,10 +267,67 @@ describe("broker : proxy modèle", () => {
     expect(upstreamSeen).toHaveLength(1);
   });
 
+  it("abonnement Claude : le jeton part en Bearer, avec la bêta d'abonnement ajoutée une fois", async () => {
+    await broker?.close();
+    await startRun("10", { kind: "subscription", secret: SUBSCRIPTION });
+    const res = await model({ model: "claude-opus-5-5", stream: true, messages: [] });
+
+    expect(res.status).toBe(200);
+    const seen = upstreamSeen[0]!;
+    expect(seen.headers.authorization).toBe(`Bearer ${SUBSCRIPTION}`);
+    expect(seen.headers["x-api-key"]).toBeUndefined();
+    expect(seen.headers["anthropic-beta"]).toBe("oauth-2025-04-20");
+    expect(JSON.stringify(seen.headers)).not.toContain(token);
+  });
+
+  it("une limite (429) donne la reprise annoncée par le fournisseur", async () => {
+    upstreamMode = "limited";
+    // Dès la première limite : Claude Code n'insiste pas sur une longue attente.
+    expect((await model({ model: "claude-opus-5-5" })).status).toBe(429);
+    expect(announced).toEqual([{ runId, retryAfterMs: 3600_000 }]);
+    expect(outages).toEqual([]);
+    for (let i = 0; i < 2; i++) {
+      expect((await model({ model: "claude-opus-5-5" })).status).toBe(429);
+    }
+    expect(outages).toEqual([runId]);
+  });
+
   it("compte les erreurs du fournisseur", async () => {
     upstreamMode = "overloaded";
     expect((await model({ model: "claude-opus-5-5" })).status).toBe(529);
     const [run] = await t.db.select().from(runs).where(eq(runs.id, runId));
     expect(run?.providerErrors).toBe(1);
+  });
+});
+
+describe("proxy modèle : accès et reprise", () => {
+  it("clé API en x-api-key ; jeton d'abonnement en Bearer, bêtas conservées", () => {
+    expect(credentialHeaders({ kind: "api_key", secret: "k" }, "a,b")).toEqual({
+      "x-api-key": "k",
+      "anthropic-beta": "a,b",
+    });
+    expect(credentialHeaders({ kind: "api_key", secret: "k" }, undefined)).toEqual({
+      "x-api-key": "k",
+    });
+    expect(
+      credentialHeaders({ kind: "subscription", secret: "t" }, "a, oauth-2025-04-20 ,b"),
+    ).toEqual({ authorization: "Bearer t", "anthropic-beta": "a,b,oauth-2025-04-20" });
+  });
+
+  it("lit retry-after, sinon la fin de la fenêtre de l'abonnement, et ignore l'aberrant", () => {
+    const now = 1_800_000_000_000;
+    const h = (entries: Record<string, string>) => new Headers(entries);
+    expect(retryAfterMs(h({ "retry-after": "120" }), now)).toBe(120_000);
+    expect(
+      retryAfterMs(h({ "anthropic-ratelimit-unified-reset": String(now / 1000 + 5400) }), now),
+    ).toBe(5_400_000);
+    expect(retryAfterMs(h({ "retry-after": "Wed, 21 Oct 2026 07:28:00 GMT" }), now)).toBe(
+      undefined,
+    );
+    expect(retryAfterMs(h({ "retry-after": String(30 * 86_400) }), now)).toBe(undefined);
+    expect(
+      retryAfterMs(h({ "anthropic-ratelimit-unified-reset": String(now / 1000 - 10) }), now),
+    ).toBe(undefined);
+    expect(retryAfterMs(h({}), now)).toBe(undefined);
   });
 });

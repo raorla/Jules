@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import {
   ANTHROPIC_KEY_SECRET,
+  CLAUDE_SUBSCRIPTION_SECRET,
   GITHUB_APP_KEY_SECRET,
   loadBaseEnv,
   loadSecretsEnv,
@@ -234,13 +235,15 @@ async function main(argv: string[]): Promise<number> {
   ) {
     const env = loadWorkerEnv();
     return withDatabase(env.DATABASE_URL, async ({ db }) => {
-      const apiKey = (
-        await new SecretStore(db, keyringFromEnv(env)).get(DEFAULT_ORG_ID, ANTHROPIC_KEY_SECRET)
+      const secretName =
+        env.JULES_MODEL_AUTH === "subscription" ? CLAUDE_SUBSCRIPTION_SECRET : ANTHROPIC_KEY_SECRET;
+      const secret = (
+        await new SecretStore(db, keyringFromEnv(env)).get(DEFAULT_ORG_ID, secretName)
       )
         ?.toString("utf8")
         .trim();
-      if (!apiKey) {
-        throw new Error(`secret ${ANTHROPIC_KEY_SECRET} absent`);
+      if (!secret) {
+        throw new Error(`secret ${secretName} absent`);
       }
       const result = await runEvals({
         db,
@@ -257,7 +260,10 @@ async function main(argv: string[]): Promise<number> {
           sandboxImage: env.JULES_SANDBOX_IMAGE,
           egressAllow: parseAllowlist(env.JULES_EGRESS_ALLOW),
           language: env.JULES_LANGUAGE,
-          model: { upstream: env.JULES_MODEL_UPSTREAM, apiKey },
+          model: {
+            upstream: env.JULES_MODEL_UPSTREAM,
+            credential: { kind: env.JULES_MODEL_AUTH, secret },
+          },
           developer: {
             model: env.JULES_DEVELOPER_MODEL,
             effort: env.JULES_DEVELOPER_EFFORT,

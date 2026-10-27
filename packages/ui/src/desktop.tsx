@@ -32,6 +32,12 @@ export type LocalStatus = {
   url: string | null;
 };
 
+/**
+ * Accès au modèle en mode local, rangé dans le trousseau, un seul à la fois : l'abonnement Claude de
+ * la personne (jeton de `claude setup-token`, usage personnel) ou une clé API facturée à l'usage.
+ */
+export type ModelAccess = "subscription" | "api_key";
+
 /** Mode local (M10) : la pile Jules sur la machine, pilotée par le shell. */
 export type LocalStack = {
   savedMode(): Promise<DesktopMode | null>;
@@ -40,10 +46,13 @@ export type LocalStack = {
   /** Lance PostgreSQL, l'api et le worker, puis remet la clé maître et la clé API au worker. */
   start(): Promise<LocalStatus>;
   stop(): Promise<void>;
-  /** La clé API du fournisseur est dans le trousseau ; l'interface ne la relit jamais. */
-  hasApiKey(): Promise<boolean>;
-  /** Range la clé API dans le trousseau ; si la pile tourne, le worker est relancé pour la recevoir. */
-  setApiKey(key: string): Promise<LocalStatus>;
+  /** L'accès au modèle rangé dans le trousseau, s'il y en a un ; l'interface ne relit jamais sa valeur. */
+  modelAccess(): Promise<ModelAccess | null>;
+  /**
+   * Range l'accès dans le trousseau et efface l'autre ; si la pile tourne, le worker est relancé pour
+   * le recevoir.
+   */
+  setModelAccess(kind: ModelAccess, secret: string): Promise<LocalStatus>;
   /**
    * Action sensible : fenêtre native du shell, puis signature du défi par la clé du trousseau, que la
    * page ne voit jamais. `null` : la personne a annulé.
@@ -139,7 +148,8 @@ export function DesktopGate({ bridge, children }: { bridge: DesktopBridge; child
   const [error, setError] = useState<string | undefined>();
   const [session, setSession] = useState<DesktopSession | undefined>();
   const [local, setLocal] = useState<LocalStatus | undefined>();
-  const [apiKey, setApiKey] = useState("");
+  const [accessKind, setAccessKind] = useState<ModelAccess>("subscription");
+  const [secret, setSecret] = useState("");
   const stack = bridge.local;
 
   /** Version acceptée par ce serveur ; sinon, l'écran de mise à jour. */
@@ -204,8 +214,8 @@ export function DesktopGate({ bridge, children }: { bridge: DesktopBridge; child
         setStep("local_install");
         return;
       }
-      // La clé API du fournisseur est saisie ici, une fois : elle va au trousseau, jamais en base.
-      if (!(await stack.hasApiKey())) {
+      // L'accès au modèle est saisi ici, une fois : il va au trousseau, jamais en base.
+      if (!(await stack.modelAccess())) {
         setStep("local_key");
         return;
       }
@@ -235,15 +245,15 @@ export function DesktopGate({ bridge, children }: { bridge: DesktopBridge; child
     }
   };
 
-  const saveApiKey = async () => {
+  const saveAccess = async () => {
     if (!stack) {
       return;
     }
     setError(undefined);
     setStep("local_starting");
     try {
-      await stack.setApiKey(apiKey);
-      setApiKey("");
+      await stack.setModelAccess(accessKind, secret);
+      setSecret("");
       await connectLocal();
     } catch (e) {
       setError(message(e));
@@ -376,25 +386,19 @@ export function DesktopGate({ bridge, children }: { bridge: DesktopBridge; child
             className="stack"
             onSubmit={(e) => {
               e.preventDefault();
-              void saveApiKey();
+              void saveAccess();
             }}
           >
-            <p className="ink-2">{t("desktop.api_key_text")}</p>
-            <label className="stack">
-              <span className="muted">{t("desktop.api_key")}</span>
-              <input
-                className="field"
-                type="password"
-                required
-                autoComplete="off"
-                spellCheck={false}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-              />
-            </label>
+            <p className="ink-2">{t("desktop.access_intro")}</p>
+            <ModelAccessFields
+              kind={accessKind}
+              onKind={setAccessKind}
+              value={secret}
+              onValue={setSecret}
+            />
             <button className="pill primary" type="submit">
               <KeyRound aria-hidden="true" />
-              {t("desktop.api_key_save")}
+              {t("desktop.access_save")}
             </button>
           </form>
         )}
@@ -475,6 +479,60 @@ export function DesktopGate({ bridge, children }: { bridge: DesktopBridge; child
         </p>
       </div>
     </div>
+  );
+}
+
+/** Choix de l'accès au modèle (premier démarrage local, réglages) : le type, son aide et sa valeur. */
+export function ModelAccessFields({
+  kind,
+  onKind,
+  value,
+  onValue,
+}: {
+  kind: ModelAccess;
+  onKind: (kind: ModelAccess) => void;
+  value: string;
+  onValue: (value: string) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <div className="seg" role="group" aria-label={t("desktop.access_choice")}>
+        {(["subscription", "api_key"] as const).map((option) => (
+          <button
+            key={option}
+            type="button"
+            className={kind === option ? "on" : ""}
+            aria-pressed={kind === option}
+            onClick={() => {
+              onKind(option);
+            }}
+          >
+            {t(`desktop.access.${option}`)}
+          </button>
+        ))}
+      </div>
+      <p className="ink-2">{t(`desktop.access_text.${kind}`)}</p>
+      {kind === "subscription" && (
+        <p>
+          <code>claude setup-token</code>
+        </p>
+      )}
+      <label className="stack">
+        <span className="muted">{t(`desktop.access_label.${kind}`)}</span>
+        <input
+          className="field"
+          type="password"
+          required
+          autoComplete="off"
+          spellCheck={false}
+          value={value}
+          onChange={(e) => {
+            onValue(e.target.value);
+          }}
+        />
+      </label>
+    </>
   );
 }
 

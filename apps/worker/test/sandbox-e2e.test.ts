@@ -105,6 +105,38 @@ describe("M1 : issue → développeur → push → PR brouillon", () => {
   });
 });
 
+describe("abonnement Claude (claude setup-token)", () => {
+  it("le jeton part en Bearer avec la bêta d'abonnement ; ni le sandbox ni ses fichiers ne le voient", async () => {
+    model = await startFakeModel(HAPPY);
+    const token = ["sk-ant-oat01", "jeton-d-abonnement-des-tests", "0123456789"].join("-");
+    const s = sandboxSetup(t.db, model, {
+      model: { upstream: model.url, credential: { kind: "subscription", secret: token } },
+    });
+    const { task } = await seedTask(t.db, { issueNumber: 31 });
+    expect(await s.orchestrator.drainTasks()).toBe(1);
+    await s.orchestrator.idle();
+    expect((await taskState(task.id))?.state).toBe("verifying");
+
+    const calls = model.requests.filter((r) => r.path.startsWith("/v1/messages"));
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      expect(call.headers.authorization).toBe(`Bearer ${token}`);
+      expect(call.headers["x-api-key"]).toBeUndefined();
+      const betas = String(call.headers["anthropic-beta"]).split(",");
+      expect(betas.filter((b) => b === "oauth-2025-04-20")).toHaveLength(1);
+      // Les bêtas de Claude Code passent toujours.
+      expect(betas).toContain("claude-code-20250219");
+    }
+    const spec = s.driver.specs[0]!;
+    expect(JSON.stringify(spec.env)).not.toContain(token);
+    for (const dir of [s.runsDir, ...(spec.mounts ?? []).map((m) => m.source)]) {
+      for (const file of filesUnder(dir)) {
+        expect(readFileSync(file).includes(token), file).toBe(false);
+      }
+    }
+  });
+});
+
 /** Tous les fichiers sous `dir`, pour chercher une fuite de secret. */
 function filesUnder(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -359,6 +391,26 @@ describe("M1 : fiabilité", () => {
     expect(await s.orchestrator.drainTasks()).toBe(1);
     await s.orchestrator.idle();
     expect((await taskState(task.id))?.state).toBe("verifying");
+  });
+
+  it("une limite annoncée (abonnement Claude) est attendue jusqu'à sa levée, sans tentative inutile", async () => {
+    model = await startFakeModel(HAPPY);
+    model.limitNext(1000, 7200);
+    const s = sandboxSetup(t.db, model);
+    const { task } = await seedTask(t.db);
+    const before = Date.now();
+    await s.orchestrator.drainTasks();
+    await s.orchestrator.idle();
+
+    const waiting = await taskState(task.id);
+    expect(waiting).toMatchObject({ state: "waiting_provider" });
+    expect(waiting?.lastError).toContain("limite du fournisseur");
+    // La reprise suit l'annonce (2 h), pas l'attente progressive (quelques centaines de ms ici).
+    const resume = waiting!.resumeAfter!.getTime();
+    expect(resume).toBeGreaterThanOrEqual(before + 7200_000 - 60_000);
+    expect(resume).toBeLessThanOrEqual(Date.now() + 7200_000);
+    expect(await s.orchestrator.drainTasks()).toBe(0);
+    model.limitNext(0, 0);
   });
 
   it("après un crash du worker, ni commentaire en double, ni deuxième PR, ni effet perdu", async () => {

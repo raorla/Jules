@@ -11,7 +11,13 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, type Me, type TaskDetail } from "./api.js";
 import { Card, Chip } from "./components.js";
-import { useDesktop, useDesktopSession, type LocalIsolation } from "./desktop.js";
+import {
+  ModelAccessFields,
+  useDesktop,
+  useDesktopSession,
+  type LocalIsolation,
+  type ModelAccess,
+} from "./desktop.js";
 
 // Mode local du desktop (M10, ARCHITECTURE.md §4.7, §11) : niveau d'isolation affiché en permanence,
 // dossiers git comme repos, et le merge d'une demande locale par un bouton (action humaine).
@@ -88,27 +94,38 @@ export function DesktopModeCard() {
 }
 
 /**
- * Clé API du fournisseur en mode local : rangée dans le trousseau du système, jamais affichée ni
- * envoyée à l'api. La remplacer relance le worker, qui la reçoit par la remise unique.
+ * Accès au modèle en mode local : l'abonnement Claude ou une clé API, rangé dans le trousseau du
+ * système, jamais affiché ni envoyé à l'api. Le remplacer relance le worker, qui le reçoit par la
+ * remise unique.
  */
-export function LocalApiKeyCard({ me }: { me: Me }) {
+export function LocalModelAccessCard({ me }: { me: Me }) {
   const { t } = useTranslation();
   const bridge = useDesktop();
   const session = useDesktopSession();
+  const client = useQueryClient();
+  const local = session?.mode === "local" && bridge?.local !== undefined && me.role === "admin";
+  const current = useQuery({
+    queryKey: ["model-access"],
+    enabled: local,
+    queryFn: () => bridge?.local?.modelAccess() ?? Promise.resolve(null),
+  });
+  const [kind, setKind] = useState<ModelAccess | undefined>();
   const [value, setValue] = useState("");
+  const chosen = kind ?? current.data ?? "subscription";
   const replace = useMutation({
     mutationFn: async () => {
-      await bridge?.local?.setApiKey(value);
+      await bridge?.local?.setModelAccess(chosen, value);
     },
     onSuccess: () => {
       setValue("");
+      void client.invalidateQueries({ queryKey: ["model-access"] });
     },
   });
-  if (session?.mode !== "local" || !bridge?.local || me.role !== "admin") {
+  if (!local) {
     return null;
   }
   return (
-    <Card title={t("local.api_key")} icon={<KeyRound aria-hidden="true" />}>
+    <Card title={t("local.access_title")} icon={<KeyRound aria-hidden="true" />}>
       <form
         className="card-body stack"
         onSubmit={(e) => {
@@ -116,28 +133,22 @@ export function LocalApiKeyCard({ me }: { me: Me }) {
           replace.mutate();
         }}
       >
-        <p className="ink-2">{t("local.api_key_text")}</p>
-        <label className="stack">
-          <span className="muted">{t("local.api_key_new")}</span>
-          <input
-            className="field"
-            type="password"
-            required
-            autoComplete="off"
-            spellCheck={false}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-          />
-        </label>
+        <p className="ink-2">{t("local.access_text")}</p>
+        {current.data && (
+          <p>
+            {t("local.access_current")} <Chip tone="ok">{t(`desktop.access.${current.data}`)}</Chip>
+          </p>
+        )}
+        <ModelAccessFields kind={chosen} onKind={setKind} value={value} onValue={setValue} />
         <div>
           <button className="pill" type="submit" disabled={replace.isPending}>
             <KeyRound aria-hidden="true" />
-            {replace.isPending ? t("local.api_key_saving") : t("local.api_key_replace")}
+            {replace.isPending ? t("local.access_saving") : t("local.access_replace")}
           </button>
         </div>
         {replace.isSuccess && (
           <p role="status" className="chip ok">
-            {t("local.api_key_replaced")}
+            {t("local.access_replaced")}
           </p>
         )}
         {replace.isError && (

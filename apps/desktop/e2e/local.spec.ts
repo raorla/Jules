@@ -1,14 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 
-// M10 : le mode local du desktop. Choix du mode au premier lancement, clé API rangée dans le trousseau,
-// pile locale (simulée par le pont), connexion par le secret du trousseau, niveau d'isolation affiché,
-// dossiers de la machine, merge par le bouton, puis passage au mode connecté sans réinstaller. L'api,
-// la base et les dossiers git sont réels.
+// M10 : le mode local du desktop. Choix du mode au premier lancement, accès au modèle (abonnement
+// Claude ou clé API) rangé dans le trousseau, pile locale (simulée par le pont), connexion par le
+// secret du trousseau, niveau d'isolation affiché, dossiers de la machine, merge par le bouton, puis
+// passage au mode connecté sans réinstaller. L'api, la base et les dossiers git sont réels.
 
 const LOCAL_API = "http://localhost:4330";
 const CONTROL = "http://127.0.0.1:4331";
 const SECRET = "secret-de-connexion-local-des-tests-e2e-0123456789";
 const API_KEY = ["sk-ant", "api03", "cle-de-test-e2e-0123456789"].join("-");
+const SUBSCRIPTION = ["sk-ant", "oat01", "jeton-de-test-e2e-0123456789"].join("-");
 
 async function openLocalDesktop(page: Page, second: string) {
   await page.addInitScript(
@@ -24,9 +25,13 @@ async function openLocalDesktop(page: Page, second: string) {
       // Fenêtre native simulée : elle répond selon `__accept`, puis signe comme le shell.
       w.__purposes = [];
       w.__accept = true;
-      // Le trousseau simulé survit au rechargement de la page, comme le vrai.
-      const apiKeys = (): string[] =>
-        JSON.parse(sessionStorage.getItem("jules.test.apikeys") ?? "[]") as string[];
+      // Le trousseau simulé survit au rechargement de la page, comme le vrai : chaque accès au modèle
+      // enregistré, le dernier étant celui en place.
+      const saved = (): { kind: string; secret: string }[] =>
+        JSON.parse(sessionStorage.getItem("jules.test.access") ?? "[]") as {
+          kind: string;
+          secret: string;
+        }[];
       w.__JULES_DESKTOP_BRIDGE__ = {
         version: "0.1.0",
         savedServer: () => Promise.resolve(localStorage.getItem("jules.test.server")),
@@ -61,9 +66,12 @@ async function openLocalDesktop(page: Page, second: string) {
             return Promise.resolve(status);
           },
           stop: () => Promise.resolve(),
-          hasApiKey: () => Promise.resolve(apiKeys().length > 0),
-          setApiKey: (key: string) => {
-            sessionStorage.setItem("jules.test.apikeys", JSON.stringify([...apiKeys(), key]));
+          modelAccess: () => Promise.resolve(saved().at(-1)?.kind ?? null),
+          setModelAccess: (kind: string, secret: string) => {
+            sessionStorage.setItem(
+              "jules.test.access",
+              JSON.stringify([...saved(), { kind, secret }]),
+            );
             return Promise.resolve(status);
           },
           confirmStepUp: async (challenge: string, purpose: string) => {
@@ -118,21 +126,32 @@ test("mode local : isolation affichée, dossiers, merge par le bouton, puis mode
   // Premier lancement : le choix du mode.
   await expect(page.getByRole("group", { name: "Où Jules doit-il travailler ?" })).toBeVisible();
   await page.getByRole("button", { name: /Sur cette machine/ }).click();
-  // La clé API, une fois, avant le premier démarrage : elle va au trousseau, la pile ne démarre qu'après.
-  const key = page.getByLabel("Clé API Anthropic");
-  await expect(key).toHaveAttribute("type", "password");
+  // L'accès au modèle, une fois, avant le premier démarrage : l'abonnement Claude par défaut, avec
+  // la commande qui donne le jeton. Il va au trousseau ; la pile ne démarre qu'après.
+  const access = page.getByRole("group", { name: "Accès au modèle" });
+  await expect(access.getByRole("button", { name: "Abonnement Claude" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByText("claude setup-token")).toBeVisible();
+  const token = page.getByLabel("Jeton d'abonnement");
+  await expect(token).toHaveAttribute("type", "password");
   expect(await page.evaluate(() => (window as unknown as { __started: number }).__started)).toBe(0);
-  await key.fill(`  ${API_KEY}  `);
+  await token.fill(`  ${SUBSCRIPTION}  `);
   await page.getByRole("button", { name: "Enregistrer dans le trousseau" }).click();
   await expect(page.getByRole("navigation")).toBeVisible();
   expect(await page.evaluate(() => (window as unknown as { __started: number }).__started)).toBe(1);
-  const keys = () =>
+  const accesses = () =>
     page.evaluate(
-      () => JSON.parse(sessionStorage.getItem("jules.test.apikeys") ?? "[]") as string[],
+      () =>
+        JSON.parse(sessionStorage.getItem("jules.test.access") ?? "[]") as {
+          kind: string;
+          secret: string;
+        }[],
     );
-  expect(await keys()).toEqual([`  ${API_KEY}  `]);
-  const token = await page.evaluate(() => sessionStorage.getItem("token:http://localhost:4330"));
-  expect(token).toMatch(/^jds_/);
+  expect(await accesses()).toEqual([{ kind: "subscription", secret: `  ${SUBSCRIPTION}  ` }]);
+  const session = await page.evaluate(() => sessionStorage.getItem("token:http://localhost:4330"));
+  expect(session).toMatch(/^jds_/);
   await expect(page.locator(".topbar")).toContainText("ada");
   // Sous macOS et Windows : la VM de Docker Desktop, sans gVisor, et l'app le dit.
   const badge = page.locator(".isolation");
@@ -166,14 +185,20 @@ test("mode local : isolation affichée, dossiers, merge par le bouton, puis mode
   await expect(levels.getByRole("button", { name: "L1" })).toHaveAttribute("aria-pressed", "true");
   expect(await purposes()).toHaveLength(2);
 
-  // La clé se remplace depuis les réglages ; elle n'est jamais réaffichée.
-  const apiKey = page.locator(".card", { hasText: "Rangée dans le trousseau du système" });
-  await expect(apiKey).not.toContainText(API_KEY);
-  await apiKey.getByLabel("Nouvelle clé API Anthropic").fill(`${API_KEY}-2`);
-  await apiKey.getByRole("button", { name: "Remplacer la clé" }).click();
-  await expect(apiKey.getByRole("status")).toHaveText("Clé remplacée, le worker l'a reçue.");
-  await expect(apiKey.getByLabel("Nouvelle clé API Anthropic")).toHaveValue("");
-  expect(await keys()).toEqual([`  ${API_KEY}  `, `${API_KEY}-2`]);
+  // L'accès se remplace depuis les réglages, par une clé API par exemple ; il n'est jamais réaffiché.
+  const card = page.locator(".card", { hasText: "Rangé dans le trousseau du système" });
+  await expect(card).toContainText("Actuellement : Abonnement Claude");
+  await expect(card).not.toContainText(SUBSCRIPTION);
+  await card.getByRole("button", { name: "Clé API", exact: true }).click();
+  await card.getByLabel("Clé API Anthropic").fill(API_KEY);
+  await card.getByRole("button", { name: "Remplacer" }).click();
+  await expect(card.getByRole("status")).toHaveText("Accès remplacé, le worker l'a reçu.");
+  await expect(card.getByLabel("Clé API Anthropic")).toHaveValue("");
+  await expect(card).toContainText("Actuellement : Clé API");
+  expect(await accesses()).toEqual([
+    { kind: "subscription", secret: `  ${SUBSCRIPTION}  ` },
+    { kind: "api_key", secret: API_KEY },
+  ]);
 
   // L'écran de review : diff, puis la demande de merge et son bouton.
   await page.goto(`/tasks/${taskId}`);
@@ -216,8 +241,8 @@ test("mode local : sans Docker ni Podman, l'app aide à en installer un", async 
         status: () => Promise.resolve({ engine: null, isolation: null, running: false, url: null }),
         start: () => Promise.reject(new Error("jamais appelé")),
         stop: () => Promise.resolve(),
-        hasApiKey: () => Promise.reject(new Error("jamais appelé")),
-        setApiKey: () => Promise.reject(new Error("jamais appelé")),
+        modelAccess: () => Promise.reject(new Error("jamais appelé")),
+        setModelAccess: () => Promise.reject(new Error("jamais appelé")),
         confirmStepUp: () => Promise.reject(new Error("jamais appelé")),
         loginSecret: () => Promise.reject(new Error("jamais appelé")),
         pickFolder: () => Promise.resolve(null),

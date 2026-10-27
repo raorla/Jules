@@ -1,4 +1,4 @@
-import type { DesktopBridge, DesktopMode, LocalStatus } from "@jules/ui";
+import type { DesktopBridge, DesktopMode, LocalStatus, ModelAccess } from "@jules/ui";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -7,8 +7,8 @@ import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notif
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 
-// Pont entre l'interface et le shell Tauri (src-tauri). Le jeton de session, la clé maître, la clé API
-// et le secret de connexion du mode local vivent dans le trousseau du système ; l'adresse du serveur
+// Pont entre l'interface et le shell Tauri (src-tauri). Le jeton de session, la clé maître, l'accès au
+// modèle et le secret de connexion du mode local vivent dans le trousseau du système ; l'adresse du serveur
 // et le mode, qui ne sont pas secrets, dans le stockage de la webview.
 
 const SERVER_KEY = "jules.server";
@@ -68,8 +68,9 @@ export async function tauriBridge(): Promise<DesktopBridge> {
       status: () => invoke<LocalStatus>("local_status"),
       start: () => invoke<LocalStatus>("local_start"),
       stop: () => invoke("local_stop"),
-      hasApiKey: () => invoke<boolean>("local_has_api_key"),
-      setApiKey: (key) => invoke<LocalStatus>("local_set_api_key", { key }),
+      modelAccess: () => invoke<ModelAccess | null>("local_model_access"),
+      setModelAccess: (kind, secret) =>
+        invoke<LocalStatus>("local_set_model_access", { kind, secret }),
       confirmStepUp: (challenge, purpose) =>
         invoke<string | null>("local_confirm_step_up", { challenge, purpose }),
       loginSecret: () => invoke<{ secret: string; login: string }>("local_login_secret"),

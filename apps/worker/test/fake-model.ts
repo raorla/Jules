@@ -9,9 +9,11 @@ export type Step = { text: string } | { tool: string; input: Record<string, unkn
 
 export type FakeModel = {
   url: string;
-  requests: { path: string; body: Record<string, unknown> }[];
+  requests: { path: string; body: Record<string, unknown>; headers: IncomingMessage["headers"] }[];
   /** Les N prochaines requêtes répondent 529 (surcharge). */
   overloadNext(count: number): void;
+  /** Les N prochaines requêtes répondent 429 (limite atteinte), avec la reprise annoncée. */
+  limitNext(count: number, retryAfterSeconds: number): void;
   /** Usage déclaré pour chaque réponse (pour tester le budget). */
   setUsage(usage: { input_tokens: number; output_tokens: number }): void;
   /** Bloque les réponses jusqu'à `release()` (pour tester l'arrêt d'urgence). */
@@ -57,6 +59,7 @@ export async function startFakeModel(
     typeof input === "function" ? input(body) : Array.isArray(input) ? { build: input } : input;
   const requests: FakeModel["requests"] = [];
   let overloaded = 0;
+  let limited = { count: 0, retryAfter: 0 };
   let usage = { input_tokens: 100, output_tokens: 20 };
   let hanging: (() => void)[] | undefined;
   let id = 0;
@@ -64,7 +67,7 @@ export async function startFakeModel(
   const respond = (req: IncomingMessage, res: ServerResponse, raw: string) => {
     const path = req.url ?? "/";
     const body = (raw ? JSON.parse(raw) : {}) as Body;
-    requests.push({ path, body: body });
+    requests.push({ path, body: body, headers: req.headers });
 
     if (path.includes("count_tokens")) {
       res.writeHead(200, { "content-type": "application/json" }).end('{"input_tokens":10}');
@@ -74,6 +77,16 @@ export async function startFakeModel(
       res
         .writeHead(404, { "content-type": "application/json" })
         .end('{"type":"error","error":{"type":"not_found_error","message":"inconnu"}}');
+      return;
+    }
+    if (limited.count > 0) {
+      limited.count -= 1;
+      res
+        .writeHead(429, {
+          "content-type": "application/json",
+          "retry-after": String(limited.retryAfter),
+        })
+        .end('{"type":"error","error":{"type":"rate_limit_error","message":"limite atteinte"}}');
       return;
     }
     if (overloaded > 0) {
@@ -167,6 +180,9 @@ export async function startFakeModel(
     requests,
     overloadNext: (count) => {
       overloaded = count;
+    },
+    limitNext: (count, retryAfter) => {
+      limited = { count, retryAfter };
     },
     setUsage: (u) => {
       usage = u;

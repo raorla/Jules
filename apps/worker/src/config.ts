@@ -3,6 +3,8 @@ import { z } from "zod";
 
 export const GITHUB_APP_KEY_SECRET = "github_app_private_key";
 export const ANTHROPIC_KEY_SECRET = "anthropic_api_key";
+/** Jeton d'un abonnement Claude (`claude setup-token`) : pour une instance personnelle seulement. */
+export const CLAUDE_SUBSCRIPTION_SECRET = "claude_oauth_token";
 
 const base = {
   DATABASE_URL: z.string().min(1),
@@ -43,6 +45,9 @@ const workerShape = {
   JULES_MAX_CONCURRENT_RUNS: z.coerce.number().int().positive().default(2),
   // Modèle (ARCHITECTURE.md §6) : l'effort se règle explicitement, Opus 5.5 est à `medium` par défaut.
   JULES_MODEL_UPSTREAM: z.url().default("https://api.anthropic.com"),
+  // Accès au modèle sur un serveur : clé API (`anthropic_api_key`), ou abonnement Claude d'une seule
+  // personne (`claude_oauth_token`). En mode local, le desktop remet l'un ou l'autre.
+  JULES_MODEL_AUTH: z.enum(["api_key", "subscription"]).default("api_key"),
   JULES_DEVELOPER_MODEL: z.string().default("claude-opus-5-5"),
   JULES_DEVELOPER_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("xhigh"),
   JULES_DEVELOPER_FALLBACK_MODEL: z.string().default("claude-sonnet-5-5"),

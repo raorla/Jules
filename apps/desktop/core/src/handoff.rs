@@ -28,11 +28,27 @@ impl fmt::Display for HandoffError {
     }
 }
 
-/// Contenu remis : clé maître (base64) et, si la personne l'y a rangée, la clé API du fournisseur.
+/// Accès au modèle remis au worker : une clé API, ou le jeton d'un abonnement Claude créé par
+/// `claude setup-token` (usage personnel). Jamais les deux.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelAccess {
+    ApiKey(String),
+    Subscription(String),
+}
+
+impl ModelAccess {
+    fn secret_mut(&mut self) -> &mut String {
+        match self {
+            Self::ApiKey(value) | Self::Subscription(value) => value,
+        }
+    }
+}
+
+/// Contenu remis : clé maître (base64) et l'accès au modèle rangé dans le trousseau.
 pub struct Secrets {
     pub master_key: String,
     pub previous_keys: Vec<String>,
-    pub anthropic_api_key: Option<String>,
+    pub model_access: Option<ModelAccess>,
 }
 
 impl Drop for Secrets {
@@ -40,7 +56,7 @@ impl Drop for Secrets {
         // Effacement de la mémoire, au mieux : les chaînes ne se recopient pas ailleurs ici.
         for value in std::iter::once(&mut self.master_key)
             .chain(self.previous_keys.iter_mut())
-            .chain(self.anthropic_api_key.iter_mut())
+            .chain(self.model_access.iter_mut().map(ModelAccess::secret_mut))
         {
             // SAFETY : des zéros sont un UTF-8 valide.
             unsafe { value.as_bytes_mut().fill(0) };
@@ -72,8 +88,12 @@ impl Secrets {
             json_string(&self.master_key),
             previous.join(",")
         );
-        if let Some(key) = &self.anthropic_api_key {
-            json.push_str(&format!(",\"anthropicApiKey\":{}", json_string(key)));
+        match &self.model_access {
+            Some(ModelAccess::ApiKey(key)) => json.push_str(&format!(",\"anthropicApiKey\":{}", json_string(key))),
+            Some(ModelAccess::Subscription(token)) => {
+                json.push_str(&format!(",\"claudeOauthToken\":{}", json_string(token)))
+            }
+            None => {}
         }
         json.push('}');
         json
@@ -196,7 +216,7 @@ mod tests {
         Secrets {
             master_key: "a2V5LWRlLXRlc3QtMzItb2N0ZXRzLXBvdXItamV1eA==".into(),
             previous_keys: vec![],
-            anthropic_api_key: Some("sk-ant-\"test\"".into()),
+            model_access: Some(ModelAccess::ApiKey("sk-ant-\"test\"".into())),
         }
     }
 
@@ -221,6 +241,12 @@ mod tests {
         assert_eq!(
             secrets().to_json(),
             r#"{"masterKey":"a2V5LWRlLXRlc3QtMzItb2N0ZXRzLXBvdXItamV1eA==","previousKeys":[],"anthropicApiKey":"sk-ant-\"test\""}"#
+        );
+        let mut subscription = secrets();
+        subscription.model_access = Some(ModelAccess::Subscription("sk-ant-oat01-jeton".into()));
+        assert_eq!(
+            subscription.to_json(),
+            r#"{"masterKey":"a2V5LWRlLXRlc3QtMzItb2N0ZXRzLXBvdXItamV1eA==","previousKeys":[],"claudeOauthToken":"sk-ant-oat01-jeton"}"#
         );
     }
 

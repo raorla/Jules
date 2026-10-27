@@ -135,7 +135,10 @@ describe("M5 : evals", () => {
       sandboxImage: TEST_IMAGES.sandbox,
       egressAllow: ["registry.npmjs.org"],
       language: "fr" as const,
-      model: { upstream: model.url, apiKey: "sk-ant-eval-0123456789abcdef0123" },
+      model: {
+        upstream: model.url,
+        credential: { kind: "api_key" as const, secret: "sk-ant-eval-0123456789abcdef0123" },
+      },
       developer: {
         model: "claude-opus-5-5",
         effort: "high" as const,

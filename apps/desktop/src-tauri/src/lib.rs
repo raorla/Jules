@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use jules_desktop_core::callback::parse_callback;
 use jules_desktop_core::engine::EngineKind;
+use jules_desktop_core::handoff::ModelAccess;
 use jules_desktop_core::local::{self, Vault};
 use jules_desktop_core::pkce::{login_url, random_token, Pkce};
 use jules_desktop_core::stepup;
@@ -193,6 +194,12 @@ impl Vault for Keychain {
     fn set(&self, name: &str, value: &str) -> Result<(), String> {
         entry(name)?.set_password(value).map_err(|e| e.to_string())
     }
+    fn delete(&self, name: &str) -> Result<(), String> {
+        match entry(name)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -259,17 +266,21 @@ async fn local_start(app: AppHandle) -> Result<LocalStatus, String> {
     .map_err(|e| e.to_string())?
 }
 
-/// La clé API du fournisseur est dans le trousseau ; l'interface ne la relit jamais.
+/// L'accès au modèle rangé dans le trousseau (`api_key` ou `subscription`) ; jamais sa valeur.
 #[tauri::command]
-fn local_has_api_key() -> Result<bool, String> {
-    Ok(Keychain.get(local::API_KEY_ENTRY)?.is_some())
+fn local_model_access() -> Result<Option<&'static str>, String> {
+    Ok(local::model_access(&Keychain)?.map(|access| match access {
+        ModelAccess::ApiKey(_) => local::AccessKind::ApiKey.as_str(),
+        ModelAccess::Subscription(_) => local::AccessKind::Subscription.as_str(),
+    }))
 }
 
-/// Range la clé API dans le trousseau. Si la pile tourne, le worker est relancé pour la recevoir.
+/// Range une clé API ou un jeton d'abonnement Claude, et efface l'autre. Si la pile tourne, le worker
+/// est relancé pour le recevoir.
 #[tauri::command]
-async fn local_set_api_key(app: AppHandle, key: String) -> Result<LocalStatus, String> {
-    let key = local::api_key(&key)?;
-    Keychain.set(local::API_KEY_ENTRY, &key)?;
+async fn local_set_model_access(app: AppHandle, kind: String, secret: String) -> Result<LocalStatus, String> {
+    let kind = local::AccessKind::parse(&kind).ok_or("accès au modèle inconnu")?;
+    local::set_model_access(&Keychain, kind, &secret)?;
     tauri::async_runtime::spawn_blocking(move || {
         if !local::status().running {
             return Ok(local::status().into());
@@ -330,8 +341,8 @@ pub fn run() {
             local_status,
             local_start,
             local_stop,
-            local_has_api_key,
-            local_set_api_key,
+            local_model_access,
+            local_set_model_access,
             local_confirm_step_up,
             local_login_secret,
             local_container_path

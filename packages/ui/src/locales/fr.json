@@ -408,9 +408,21 @@
     "engine_help": "Le mode local lance Jules dans des conteneurs. Installe l'un des deux, démarre-le, puis réessaie.",
     "engine_docker": "macOS, Windows (avec WSL 2) et Linux",
     "engine_podman": "alternative libre, sans service en arrière-plan",
-    "api_key": "Clé API Anthropic",
-    "api_key_text": "Jules a besoin de ta clé API pour faire travailler ses agents. Elle est rangée dans le trousseau du système, jamais dans un fichier ni dans la base, et remise au worker à chaque démarrage.",
-    "api_key_save": "Enregistrer dans le trousseau"
+    "access_intro": "Jules a besoin d'un accès au modèle pour faire travailler ses agents. Il est rangé dans le trousseau du système, jamais dans un fichier ni dans la base, et remis au worker à chaque démarrage.",
+    "access_save": "Enregistrer dans le trousseau",
+    "access_choice": "Accès au modèle",
+    "access": {
+      "subscription": "Abonnement Claude",
+      "api_key": "Clé API"
+    },
+    "access_text": {
+      "subscription": "Avec ton abonnement Claude (Pro ou Max), pour ton usage personnel seulement. Dans un terminal, lance la commande ci-dessous, connecte-toi, puis colle le jeton affiché. Quand ton abonnement atteint sa limite, les tâches attendent qu'elle se lève.",
+      "api_key": "Avec une clé API de la Claude Console, facturée à l'usage."
+    },
+    "access_label": {
+      "subscription": "Jeton d'abonnement",
+      "api_key": "Clé API Anthropic"
+    }
   },
   "local": {
     "mode_title": "Mode de l'app",
@@ -433,12 +445,12 @@
     "merged": "Mergée ({{sha}}) : la branche de base du dossier est à jour.",
     "merge_refused": "Merge refusé",
     "merge_role": "Le merge demande le rôle maintainer.",
-    "api_key": "Clé API",
-    "api_key_text": "Rangée dans le trousseau du système : Jules ne l'affiche jamais. La remplacer relance le worker ; une exécution en cours est interrompue.",
-    "api_key_new": "Nouvelle clé API Anthropic",
-    "api_key_replace": "Remplacer la clé",
-    "api_key_saving": "Relance du worker…",
-    "api_key_replaced": "Clé remplacée, le worker l'a reçue."
+    "access_title": "Accès au modèle",
+    "access_text": "Rangé dans le trousseau du système : Jules ne l'affiche jamais. Le remplacer relance le worker ; une exécution en cours est interrompue.",
+    "access_current": "Actuellement :",
+    "access_replace": "Remplacer",
+    "access_saving": "Relance du worker…",
+    "access_replaced": "Accès remplacé, le worker l'a reçu."
   },
   "stepup_page": {
     "subtitle": "confirme une action.",

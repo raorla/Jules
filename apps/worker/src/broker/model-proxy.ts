@@ -3,8 +3,8 @@ import { costUsd, type Usage } from "./pricing.js";
 import type { Masker } from "./masking.js";
 
 // Proxy modèle du broker (ARCHITECTURE.md §4.3) : le sandbox appelle `/model/*` avec son jeton
-// d'exécution ; le proxy le remplace par la vraie clé, compte les tokens et le coût, masque les
-// secrets connus dans les deux sens et coupe quand le budget est atteint.
+// d'exécution ; le proxy le remplace par le vrai accès au modèle, compte les tokens et le coût, masque
+// les secrets connus dans les deux sens et coupe quand le budget est atteint.
 
 const FORWARDED_REQUEST_HEADERS = [
   "content-type",
@@ -35,14 +35,65 @@ export type ProxyAccounting = {
   status: number;
   /** Erreur du fournisseur (surcharge, limite, panne réseau) : compte pour `waiting_provider`. */
   providerError: boolean;
+  /** Limite atteinte (429) : délai de reprise annoncé par le fournisseur, s'il en annonce un. */
+  retryAfterMs?: number;
 };
+
+/**
+ * Accès au modèle : une clé API, facturée à l'usage, ou le jeton d'un abonnement Claude créé par
+ * `claude setup-token`, pour une instance personnelle seulement. Le sandbox ne voit ni l'un ni
+ * l'autre : il présente son jeton d'exécution, que le proxy remplace.
+ */
+export type ModelCredential = { kind: "api_key" | "subscription"; secret: string };
+
+/** Bêta qu'ajoute Claude Code quand il appelle le modèle avec un abonnement (observé en 2.1.300). */
+export const SUBSCRIPTION_BETA = "oauth-2025-04-20";
+
+/** Au-delà, une annonce de reprise est jugée aberrante : on garde l'attente progressive. */
+const MAX_RETRY_AFTER_MS = 7 * 86_400_000;
 
 export type ModelProxyOptions = {
   upstream: string;
-  apiKey: string;
+  credential: ModelCredential;
   masker: Masker;
   fetchImpl?: typeof fetch;
 };
+
+/** En-têtes d'authentification vers le fournisseur, et la bêta d'abonnement ajoutée aux autres. */
+export function credentialHeaders(
+  credential: ModelCredential,
+  beta: string | undefined,
+): Record<string, string> {
+  if (credential.kind === "api_key") {
+    return { "x-api-key": credential.secret, ...(beta ? { "anthropic-beta": beta } : {}) };
+  }
+  const betas = (beta ?? "")
+    .split(",")
+    .map((b) => b.trim())
+    .filter(Boolean);
+  return {
+    authorization: `Bearer ${credential.secret}`,
+    "anthropic-beta": [...betas.filter((b) => b !== SUBSCRIPTION_BETA), SUBSCRIPTION_BETA].join(
+      ",",
+    ),
+  };
+}
+
+/**
+ * Reprise annoncée par le fournisseur sur une limite : `retry-after` en secondes, sinon la fin de la
+ * fenêtre de l'abonnement (`anthropic-ratelimit-unified-reset`, en secondes Unix).
+ */
+export function retryAfterMs(headers: Headers, now = Date.now()): number | undefined {
+  const seconds = headers.get("retry-after")?.trim();
+  const reset = headers.get("anthropic-ratelimit-unified-reset")?.trim();
+  const ms =
+    seconds && /^\d+$/.test(seconds)
+      ? Number(seconds) * 1000
+      : reset && /^\d+$/.test(reset)
+        ? Number(reset) * 1000 - now
+        : undefined;
+  return ms !== undefined && ms > 0 && ms <= MAX_RETRY_AFTER_MS ? ms : undefined;
+}
 
 const emptyUsage = (): Usage => ({
   inputTokens: 0,
@@ -151,13 +202,14 @@ export async function forwardToModel(
     }
   }
 
-  const headers: Record<string, string> = { "x-api-key": options.apiKey };
+  const headers: Record<string, string> = {};
   for (const name of FORWARDED_REQUEST_HEADERS) {
     const value = request.headers[name];
     if (typeof value === "string") {
       headers[name] = value;
     }
   }
+  Object.assign(headers, credentialHeaders(options.credential, headers["anthropic-beta"]));
 
   let upstream: Response;
   try {
@@ -206,11 +258,13 @@ export async function forwardToModel(
       // Réponse non JSON (erreur HTML d'un proxy, par exemple) : rien à compter.
     }
   }
+  const wait = upstream.status === 429 ? retryAfterMs(upstream.headers) : undefined;
   return {
     model,
     usage,
     costUsd: costUsd(model, usage),
     status: upstream.status,
     providerError: isProviderError(upstream.status),
+    ...(wait !== undefined ? { retryAfterMs: wait } : {}),
   };
 }

@@ -29,7 +29,7 @@ Le script vérifie l'hôte (Docker, gVisor), crée les secrets locaux (`deploy/s
 **Range tout de suite hors de la machine** la clé maître (`deploy/secrets/jules_master_key`) et le mot de passe restic, avec l'empreinte affichée. Sans eux, une sauvegarde est inutilisable.
 
 Ensuite :
-1. crée la GitHub App ([deploy/README.md §3](../deploy/README.md#3-créer-la-github-app)) et enregistre sa clé et la clé API du fournisseur, chiffrées ([§4](../deploy/README.md#4-enregistrer-les-clés-chiffrées)) ;
+1. crée la GitHub App ([deploy/README.md §3](../deploy/README.md#3-créer-la-github-app)) et enregistre sa clé et la clé API du fournisseur (ou, pour une instance personnelle, le jeton de ton abonnement Claude avec `JULES_MODEL_AUTH=subscription`), chiffrées ([§4](../deploy/README.md#4-enregistrer-les-clés-chiffrées)) ;
 2. renseigne le dépôt des sauvegardes dans `deploy/backup.env` ;
 3. `sudo deploy/install.sh --github-app-id <n>` démarre le worker ;
 4. essaie sur un repo bac à sable ([§6](../deploy/README.md#6-essai-sur-le-repo-bac-à-sable)), puis mets tes repos sous Jules en L0.

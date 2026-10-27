@@ -186,7 +186,7 @@ export async function runEvals(options: EvalRunOptions): Promise<EvalResult> {
       github,
       driver: options.driver,
       log: options.log.child({ eval: task.id, label: options.label }),
-      masker: new Masker([options.config.model.apiKey]),
+      masker: new Masker([options.config.model.credential.secret]),
       config: {
         runsDir: options.config.runsDir ?? mkdtempSync(join(tmpdir(), "jules-eval-runs-")),
         ...options.config,

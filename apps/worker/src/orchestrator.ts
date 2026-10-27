@@ -63,6 +63,7 @@ import type { SandboxDriver } from "@jules/sandbox";
 import { RUNNABLE_STATES, maxRisk, type Risk, type TaskEvent } from "@jules/workflow";
 import type { Logger } from "pino";
 import type { Masker } from "./broker/masking.js";
+import type { ModelCredential } from "./broker/model-proxy.js";
 import { startBroker } from "./broker/server.js";
 import { issueRunToken } from "./broker/tokens.js";
 import { isStopped } from "./controls.js";
@@ -173,7 +174,7 @@ export type OrchestratorDeps = {
     sandboxImage: string;
     egressAllow: readonly string[];
     language: Language;
-    model: { upstream: string; apiKey: string; fetchImpl?: typeof fetch };
+    model: { upstream: string; credential: ModelCredential; fetchImpl?: typeof fetch };
     /** Réglages du développeur ; les autres rôles en héritent, avec leur effort par défaut. */
     developer: RoleSettings;
     roles?: Partial<Record<AgentRole, Partial<RoleSettings>>>;
@@ -222,6 +223,8 @@ export class Orchestrator {
   readonly #active = new Set<string>();
   readonly #activeRuns = new Set<string>();
   readonly #stopReasons = new Map<string, "budget" | "provider">();
+  /** Reprise annoncée par le fournisseur (limite d'un abonnement), par tâche. */
+  readonly #providerResumeAt = new Map<string, number>();
 
   constructor(deps: OrchestratorDeps) {
     this.#deps = deps;
@@ -772,6 +775,9 @@ export class Orchestrator {
             this.#stopReasons.set(id, "budget");
             void driver.stop(id);
           },
+          onRetryAfter: (_id, retryAfterMs) => {
+            this.#providerResumeAt.set(task.id, Date.now() + retryAfterMs);
+          },
           onProviderOutage: (id) => {
             if (!this.#stopReasons.has(id)) {
               this.#stopReasons.set(id, "provider");
@@ -833,6 +839,9 @@ export class Orchestrator {
       const [finished] = await db.select().from(runs).where(eq(runs.id, run.id));
       const stopReason = this.#stopReasons.get(run.id);
       this.#stopReasons.delete(run.id);
+      // Reprise annoncée pendant cette exécution ; elle ne sert que si l'exécution bute sur la limite.
+      const announcedResumeAt = this.#providerResumeAt.get(task.id);
+      this.#providerResumeAt.delete(task.id);
       const budgetExceeded =
         stopReason === "budget" ||
         (finished !== undefined && Number(finished.costUsd) >= Number(finished.budgetUsd));
@@ -1026,13 +1035,19 @@ export class Orchestrator {
           submitted.content as { commitMessage: string },
         );
       } else if (runStatus === "provider_unavailable") {
-        const delay = providerRetryDelayMs(config.providerRetryBaseMs, task.attempts);
+        // Une limite annoncée (fenêtre d'un abonnement) : on attend sa fin plutôt que de réessayer.
+        const announced = announcedResumeAt !== undefined && announcedResumeAt > Date.now();
+        const resumeAt = announced
+          ? announcedResumeAt
+          : Date.now() + providerRetryDelayMs(config.providerRetryBaseMs, task.attempts);
         await this.#apply(
           task,
           { type: "provider_unavailable" },
           {
-            resumeAfter: new Date(Date.now() + delay),
-            lastError: "fournisseur de modèle indisponible ; nouvelle tentative automatique",
+            resumeAfter: new Date(resumeAt),
+            lastError: announced
+              ? "limite du fournisseur de modèle atteinte ; reprise automatique à sa levée"
+              : "fournisseur de modèle indisponible ; nouvelle tentative automatique",
           },
         );
       } else {

@@ -8,7 +8,7 @@ import { handleCapability } from "./capabilities.js";
 import { truncate, type Masker } from "./masking.js";
 import type { SecurityTools } from "./security-tools.js";
 import type { DevopsTools } from "./server-tools.js";
-import { anthropicError, forwardToModel } from "./model-proxy.js";
+import { anthropicError, forwardToModel, type ModelCredential } from "./model-proxy.js";
 import { bearer, hashRunToken } from "./tokens.js";
 import { withSpan } from "../tracing.js";
 
@@ -19,11 +19,17 @@ export type BrokerDeps = {
   db: Db;
   log: Logger;
   masker: Masker;
-  model: { upstream: string; apiKey: string; fetchImpl?: typeof fetch };
+  model: { upstream: string; credential: ModelCredential; fetchImpl?: typeof fetch };
   /** Appelé quand le budget de l'exécution est atteint : le worker tue le sandbox. */
   onBudgetExceeded: (runId: string) => void;
   /** Appelé après plusieurs erreurs consécutives du fournisseur : la tâche passera en `waiting_provider`. */
   onProviderOutage?: (runId: string) => void;
+  /**
+   * Appelé quand le fournisseur annonce la levée d'une limite (fenêtre d'un abonnement) : la tâche
+   * attendra jusque-là. Claude Code n'insiste pas sur une longue attente, le seuil de panne n'est donc
+   * pas forcément atteint.
+   */
+  onRetryAfter?: (runId: string, retryAfterMs: number) => void;
   /** Outils serveur, pour une exécution de l'agent DevOps seulement. */
   devops?: DevopsTools;
   /** Audits et findings, pour une exécution de l'agent Sécurité seulement. */
@@ -186,6 +192,9 @@ export async function startBroker(
     );
     if (updated && Number(updated.costUsd) >= Number(updated.budgetUsd)) {
       deps.onBudgetExceeded(auth.run.id);
+    }
+    if (accounting.retryAfterMs !== undefined) {
+      deps.onRetryAfter?.(auth.run.id, accounting.retryAfterMs);
     }
     consecutiveProviderErrors = accounting.providerError ? consecutiveProviderErrors + 1 : 0;
     if (consecutiveProviderErrors >= PROVIDER_OUTAGE_THRESHOLD) {

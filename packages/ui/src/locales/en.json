@@ -408,9 +408,21 @@
     "engine_help": "Local mode runs Jules in containers. Install one of them, start it, then retry.",
     "engine_docker": "macOS, Windows (with WSL 2) and Linux",
     "engine_podman": "free alternative, no background service",
-    "api_key": "Anthropic API key",
-    "api_key_text": "Jules needs your API key to run its agents. It is kept in the system keychain, never in a file or in the database, and handed to the worker each time it starts.",
-    "api_key_save": "Save to the keychain"
+    "access_intro": "Jules needs access to the model to run its agents. It is kept in the system keychain, never in a file or in the database, and handed to the worker each time it starts.",
+    "access_save": "Save to the keychain",
+    "access_choice": "Model access",
+    "access": {
+      "subscription": "Claude subscription",
+      "api_key": "API key"
+    },
+    "access_text": {
+      "subscription": "With your Claude subscription (Pro or Max), for your personal use only. In a terminal, run the command below, sign in, then paste the token it prints. When your subscription reaches its limit, tasks wait until it lifts.",
+      "api_key": "With an API key from the Claude Console, billed per use."
+    },
+    "access_label": {
+      "subscription": "Subscription token",
+      "api_key": "Anthropic API key"
+    }
   },
   "local": {
     "mode_title": "App mode",
@@ -433,12 +445,12 @@
     "merged": "Merged ({{sha}}): the folder's base branch is up to date.",
     "merge_refused": "Merge refused",
     "merge_role": "Merging requires the maintainer role.",
-    "api_key": "API key",
-    "api_key_text": "Kept in the system keychain: Jules never shows it. Replacing it restarts the worker; a run in progress is interrupted.",
-    "api_key_new": "New Anthropic API key",
-    "api_key_replace": "Replace the key",
-    "api_key_saving": "Restarting the worker…",
-    "api_key_replaced": "Key replaced, the worker has it."
+    "access_title": "Model access",
+    "access_text": "Kept in the system keychain: Jules never shows it. Replacing it restarts the worker; a run in progress is interrupted.",
+    "access_current": "Currently:",
+    "access_replace": "Replace",
+    "access_saving": "Restarting the worker…",
+    "access_replaced": "Access replaced, the worker has it."
   },
   "stepup_page": {
     "subtitle": "confirm an action.",

@@ -7,14 +7,19 @@ import { z } from "zod";
 // dans le conteneur (Linux) ou une adresse de bouclage jointe par `host.docker.internal` (Docker
 // Desktop). Le jeton d'accès, lui, peut traîner dans la config du conteneur : il ne sert qu'une fois.
 
-const payload = z.object({
-  masterKey: z.string().min(1),
-  previousKeys: z.array(z.string().min(1)).max(5).default([]),
-  /** Clé API du fournisseur, si la personne l'a rangée dans le trousseau plutôt qu'en base. */
-  anthropicApiKey: z.string().min(1).optional(),
-});
+const payload = z
+  .object({
+    masterKey: z.string().min(1),
+    previousKeys: z.array(z.string().min(1)).max(5).default([]),
+    /** Accès au modèle rangé dans le trousseau : une clé API, ou le jeton d'un abonnement Claude. */
+    anthropicApiKey: z.string().min(1).optional(),
+    claudeOauthToken: z.string().min(1).optional(),
+  })
+  .refine((data) => !(data.anthropicApiKey && data.claudeOauthToken), {
+    message: "un seul accès au modèle",
+  });
 
-export type Handoff = { keyring: Keyring; anthropicApiKey?: string };
+export type Handoff = { keyring: Keyring; anthropicApiKey?: string; claudeOauthToken?: string };
 
 export class HandoffError extends Error {}
 
@@ -74,6 +79,7 @@ export async function receiveHandoff(
             resolve({
               keyring,
               ...(data.anthropicApiKey ? { anthropicApiKey: data.anthropicApiKey } : {}),
+              ...(data.claudeOauthToken ? { claudeOauthToken: data.claudeOauthToken } : {}),
             });
           } catch (error) {
             reject(error instanceof HandoffError ? error : new HandoffError("remise illisible"));

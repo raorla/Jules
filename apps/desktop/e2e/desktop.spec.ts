@@ -161,8 +161,11 @@ test("action sensible du desktop connecté : la passkey se fait dans le navigate
   await expect(
     dialog.getByRole("button", { name: "Confirme dans ton navigateur…" }),
   ).toBeDisabled();
-  const url = await page.evaluate(() => (window as unknown as { __stepUp?: string }).__stepUp);
-  expect(url).toMatch(/^http:\/\/localhost:4310\/stepup\?request=[A-Za-z0-9_-]{43}$/);
+  // L'app ouvre le navigateur une fois la demande créée par l'api.
+  const opened = () =>
+    page.evaluate(() => (window as unknown as { __stepUp?: string }).__stepUp ?? "");
+  await expect.poll(opened).toMatch(/^http:\/\/localhost:4310\/stepup\?request=[A-Za-z0-9_-]{43}$/);
+  const url = await opened();
 
   // Le navigateur du système : une autre page, sur le serveur, avec un authentificateur (CDP).
   const browser = await context.newPage();
@@ -188,7 +191,7 @@ test("action sensible du desktop connecté : la passkey se fait dans le navigate
     0,
   );
 
-  await browser.goto(url!);
+  await browser.goto(url);
   await expect(browser.getByText("relever l'autonomie")).toBeVisible();
   await browser.getByRole("button", { name: "Utiliser ma passkey" }).click();
   await expect(browser.getByRole("status")).toHaveText(

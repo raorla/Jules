@@ -87,6 +87,17 @@ shred -u anthropic.key
 
 Les clés sont chiffrées par la clé maître avant d'entrer en base. Elles n'existent plus en clair nulle part, et n'entrent jamais dans un sandbox : le broker remplace le jeton d'exécution par la vraie clé.
 
+**Instance personnelle avec un abonnement Claude** (Pro ou Max) au lieu d'une clé API : Anthropic réserve ce jeton à l'usage de la personne abonnée, jamais à une équipe ni à un service offert à d'autres. Crée-le sur ton poste avec `claude setup-token` (valable un an), puis :
+
+```bash
+docker compose run --rm -T worker node dist/cli.js secrets set claude_oauth_token < claude.token
+shred -u claude.token
+# dans deploy/.env :
+JULES_MODEL_AUTH=subscription
+```
+
+Le broker l'envoie au fournisseur comme le fait Claude Code avec un abonnement (en-tête `Authorization`, bêta `oauth-2025-04-20`). Quand l'abonnement atteint sa limite, les tâches passent en `waiting_provider` jusqu'à l'heure de reprise annoncée par le fournisseur, sans échouer. Les budgets en dollars restent des plafonds, calculés au prix de l'API.
+
 ## 5. Démarrer
 
 ```bash
@@ -241,6 +252,6 @@ En mode local, l'app desktop lance elle-même `deploy/local/compose.yaml` (embar
 - **Moteur** : Docker (Docker Engine sous Linux, Docker Desktop sous macOS et Windows avec WSL 2) ou Podman. L'app lit `docker info`, puis `podman info`, et propose l'installation si aucun ne répond. Le pilote des sandboxes n'est vérifié qu'avec Docker : Podman est détecté, mais son réseau interne isolé reste à valider.
 - **Isolation** : gVisor si `runsc` figure parmi les runtimes de Docker (Linux), sinon la VM de Docker Desktop, sinon un conteneur ordinaire. L'app l'affiche en permanence. Pour un repo sensible, préfère un serveur Jules.
 - **Images** : l'app lance les images de sa propre version (`jules-api:0.1.0` pour l'app 0.1.0, etc.). Tant qu'elles ne sont pas publiées, construis-les depuis le repo, une fois par version de l'app : `deploy/local/build-images.sh` (version de `apps/desktop/package.json`, ou celle passée en argument). Sans elles, l'app affiche « Images Jules … introuvables ».
-- **Secrets** : la clé maître et le secret de connexion de l'app sont tirés au premier lancement et rangés dans le trousseau du système (service `jules-desktop`, entrées `local:master-key` et `local:login-secret`), de même que la clé API du fournisseur, demandée par l'app au premier démarrage (entrée `local:anthropic-api-key`), et la clé qui signe les confirmations des actions sensibles (entrée `local:step-up-key` ; l'api locale ne reçoit que sa clé publique). Aucun fichier ne les contient ; l'environnement des conteneurs non plus. La clé maître et la clé API sont remises au worker une fois par démarrage, sur un socket `$XDG_RUNTIME_DIR/jules/handoff-<id>.sock` propre à chaque démarrage (Linux) ou une adresse de bouclage (Docker Desktop) : un worker arrêté est relancé par l'app, pas par Docker. La clé API ne passe ni par la base ni par une passkey ; elle se remplace dans **Réglages → Clé API**, ce qui relance le worker.
+- **Secrets** : la clé maître et le secret de connexion de l'app sont tirés au premier lancement et rangés dans le trousseau du système (service `jules-desktop`, entrées `local:master-key` et `local:login-secret`), de même que l'accès au modèle demandé par l'app au premier démarrage, un seul à la fois : le jeton de ton abonnement Claude (`claude setup-token`, entrée `local:claude-subscription-token`, usage personnel) ou une clé API (entrée `local:anthropic-api-key`), et la clé qui signe les confirmations des actions sensibles (entrée `local:step-up-key` ; l'api locale ne reçoit que sa clé publique). Aucun fichier ne les contient ; l'environnement des conteneurs non plus. La clé maître et l'accès au modèle sont remis au worker une fois par démarrage, sur un socket `$XDG_RUNTIME_DIR/jules/handoff-<id>.sock` propre à chaque démarrage (Linux) ou une adresse de bouclage (Docker Desktop) : un worker arrêté est relancé par l'app, pas par Docker. L'accès au modèle ne passe ni par la base ni par une passkey ; il se remplace dans **Réglages → Accès au modèle**, ce qui relance le worker.
 - **Dossiers** : le dossier personnel est monté au même chemin dans le worker (`JULES_LOCAL_ROOT` pour en choisir un autre), avec les droits de la personne. Sous Windows, les chemins passent par `/run/desktop/mnt/host/<lecteur>`, la convention de Docker Desktop avec WSL 2.
 - **Arrêter, repartir de zéro** : `docker compose -p jules-local stop` garde les données ; `docker compose -p jules-local down -v` efface la base locale. Supprimer les entrées du trousseau rend illisibles les secrets chiffrés de cette base.

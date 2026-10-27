@@ -12,8 +12,10 @@ import { ServerService } from "./devops/servers.js";
 import { AuditService } from "./security/audits.js";
 import { stopAll } from "./emergency.js";
 import { ensureWorkerKey } from "./sealed-secrets.js";
+import type { ModelCredential } from "./broker/model-proxy.js";
 import {
   ANTHROPIC_KEY_SECRET,
+  CLAUDE_SUBSCRIPTION_SECRET,
   GITHUB_APP_KEY_SECRET,
   loadLocalWorkerEnv,
   loadWorkerEnv,
@@ -41,15 +43,26 @@ const handoff =
     ? await receiveHandoff(env.JULES_SECRETS_HANDOFF_URL, env.JULES_SECRETS_HANDOFF_TOKEN)
     : undefined;
 const store = new SecretStore(database.db, handoff?.keyring ?? keyringFromEnv(env));
-const apiKey = handoff?.anthropicApiKey
-  ? Buffer.from(handoff.anthropicApiKey)
-  : await store.get(DEFAULT_ORG_ID, ANTHROPIC_KEY_SECRET);
-if (!apiKey) {
-  log.fatal(
-    `secret ${ANTHROPIC_KEY_SECRET} absent : lancer \`jules secrets set ${ANTHROPIC_KEY_SECRET} < fichier\``,
-  );
+// Accès au modèle : remis par le desktop en mode local, sinon lu chiffré en base, selon
+// `JULES_MODEL_AUTH` (clé API, ou abonnement Claude d'une seule personne).
+const handed: ModelCredential | undefined = handoff?.claudeOauthToken
+  ? { kind: "subscription", secret: handoff.claudeOauthToken.trim() }
+  : handoff?.anthropicApiKey
+    ? { kind: "api_key", secret: handoff.anthropicApiKey.trim() }
+    : undefined;
+const secretName =
+  env.JULES_MODEL_AUTH === "subscription" ? CLAUDE_SUBSCRIPTION_SECRET : ANTHROPIC_KEY_SECRET;
+const stored = handed ? undefined : await store.get(DEFAULT_ORG_ID, secretName);
+if (!handed && !stored) {
+  log.fatal(`secret ${secretName} absent : lancer \`jules secrets set ${secretName} < fichier\``);
   process.exit(1);
 }
+const credential: ModelCredential = handed ?? {
+  kind: env.JULES_MODEL_AUTH,
+  secret: stored?.toString("utf8").trim() ?? "",
+};
+stored?.fill(0);
+log.info({ modelAuth: credential.kind }, "accès au modèle");
 if (env.JULES_SANDBOX_RUNTIME !== "runsc") {
   log.warn(
     { runtime: env.JULES_SANDBOX_RUNTIME },
@@ -78,8 +91,6 @@ if ("GITHUB_APP_ID" in env) {
   log.info({ repos: await forge.load() }, "mode local : forge sur les dossiers de la machine");
   github = forge;
 }
-const anthropicKey = apiKey.toString("utf8").trim();
-apiKey.fill(0);
 await mkdir(env.JULES_RUNS_DIR, { recursive: true, mode: 0o700 });
 // Clé publique des sealed boxes : l'api s'en sert pour les secrets saisis dans l'interface.
 await ensureWorkerKey(database.db, store);
@@ -88,7 +99,7 @@ const driver = new SandboxDriver({
   runtime: env.JULES_SANDBOX_RUNTIME,
   egressImage: env.JULES_EGRESS_IMAGE,
 });
-const masker = new Masker([anthropicKey]);
+const masker = new Masker([credential.secret]);
 // Agent DevOps (M7) : le worker est le seul à se connecter aux serveurs.
 const servers = new ServerService({ db: database.db, secrets: store, masker, log });
 const plans: PlanService = new PlanService({
@@ -130,7 +141,7 @@ const orchestrator = new Orchestrator({
     sandboxImage: env.JULES_SANDBOX_IMAGE,
     egressAllow: parseAllowlist(env.JULES_EGRESS_ALLOW),
     language: env.JULES_LANGUAGE,
-    model: { upstream: env.JULES_MODEL_UPSTREAM, apiKey: anthropicKey },
+    model: { upstream: env.JULES_MODEL_UPSTREAM, credential },
     developer: {
       model: env.JULES_DEVELOPER_MODEL,
       effort: env.JULES_DEVELOPER_EFFORT,
