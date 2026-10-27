@@ -50,7 +50,28 @@ export interface GitHubApp {
   getRepoToken(ref: RepoRef, permissions: Permissions): Promise<string>;
   findPullRequest(ref: RepoRef, head: string): Promise<PullRequest | undefined>;
   createPullRequest(ref: RepoRef, pr: NewPullRequest): Promise<PullRequest>;
+  /** Check runs d'un commit (la CI du projet, et ceux de Jules). */
+  listCheckRuns(ref: RepoRef, sha: string): Promise<CheckRun[]>;
+  /** Crée ou met à jour le check run `name` de ce commit. */
+  upsertCheckRun(ref: RepoRef, run: CheckRunInput): Promise<{ id: number }>;
 }
+
+export type CheckRun = {
+  readonly id: number;
+  readonly name: string;
+  readonly status: "queued" | "in_progress" | "completed" | "waiting" | "requested" | "pending";
+  readonly conclusion: string | null;
+  readonly appId: number | null;
+};
+
+export type CheckRunInput = {
+  name: string;
+  headSha: string;
+  status: "in_progress" | "completed";
+  conclusion?: "success" | "failure" | "neutral" | "action_required";
+  title: string;
+  summary: string;
+};
 
 export type PullRequest = {
   readonly number: number;
@@ -109,6 +130,53 @@ export class OctokitGitHubApp implements GitHubApp {
     });
     const pr = data[0];
     return pr ? { number: pr.number, url: pr.html_url, draft: pr.draft ?? false } : undefined;
+  }
+
+  async listCheckRuns(ref: RepoRef, sha: string): Promise<CheckRun[]> {
+    const octokit = await this.#installation(ref, { checks: "read" });
+    const runs = await octokit.paginate(octokit.rest.checks.listForRef, {
+      owner: ref.owner,
+      repo: ref.repo,
+      ref: sha,
+      per_page: 100,
+    });
+    return runs.map((r) => ({
+      id: r.id,
+      name: r.name,
+      status: r.status,
+      conclusion: r.conclusion,
+      appId: r.app?.id ?? null,
+    }));
+  }
+
+  async upsertCheckRun(ref: RepoRef, run: CheckRunInput): Promise<{ id: number }> {
+    const octokit = await this.#installation(ref, { checks: "write" });
+    const output = { title: run.title, summary: run.summary.slice(0, 65_000) };
+    const existing = (await this.listCheckRuns(ref, run.headSha)).find(
+      (r) => r.name === run.name && r.appId === this.#appId,
+    );
+    const body = {
+      status: run.status,
+      output,
+      ...(run.conclusion ? { conclusion: run.conclusion } : {}),
+    };
+    if (existing) {
+      await octokit.rest.checks.update({
+        owner: ref.owner,
+        repo: ref.repo,
+        check_run_id: existing.id,
+        ...body,
+      });
+      return { id: existing.id };
+    }
+    const { data } = await octokit.rest.checks.create({
+      owner: ref.owner,
+      repo: ref.repo,
+      name: run.name,
+      head_sha: run.headSha,
+      ...body,
+    });
+    return { id: data.id };
   }
 
   async createPullRequest(ref: RepoRef, pr: NewPullRequest): Promise<PullRequest> {

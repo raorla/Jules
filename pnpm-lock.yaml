@@ -93,6 +93,9 @@ importers:
       '@jules/forge':
         specifier: workspace:*
         version: link:../../packages/forge
+      '@jules/gates':
+        specifier: workspace:*
+        version: link:../../packages/gates
       '@jules/policy':
         specifier: workspace:*
         version: link:../../packages/policy

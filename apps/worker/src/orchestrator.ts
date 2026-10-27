@@ -18,6 +18,7 @@ import {
 } from "@jules/config";
 import {
   and,
+  approvals,
   artifacts,
   asc,
   desc,
@@ -44,9 +45,10 @@ import {
   type RepoRef,
 } from "@jules/forge";
 import { ALWAYS_DENIED_CAPABILITIES, ROLE_CAPABILITIES, decide } from "@jules/policy";
-import { estimateRisk } from "@jules/risk";
+import { computeRisk, estimateRisk } from "@jules/risk";
+import { renderReport, verdict } from "@jules/gates";
 import type { SandboxDriver } from "@jules/sandbox";
-import { RUNNABLE_STATES, type TaskEvent } from "@jules/workflow";
+import { RUNNABLE_STATES, maxRisk, type Risk, type TaskEvent } from "@jules/workflow";
 import type { Logger } from "pino";
 import type { Masker } from "./broker/masking.js";
 import { startBroker } from "./broker/server.js";
@@ -54,6 +56,7 @@ import { issueRunToken } from "./broker/tokens.js";
 import { isStopped } from "./controls.js";
 import { enqueueEffect } from "./outbox.js";
 import { applyTransition, type TaskRow } from "./transitions.js";
+import { verify } from "./verification.js";
 
 // Orchestrateur (ARCHITECTURE.md §4.3) : fait avancer chaque tâche dans la machine à états
 // (packages/workflow). Pour un état exécutable, il lance le rôle correspondant dans un sandbox,
@@ -115,6 +118,10 @@ export type OrchestratorDeps = {
     maxConcurrentRuns: number;
     providerRetryBaseMs: number;
     maxAttempts: number;
+    /** Base OSV des gates de dépendances (G5.11) ; remplacée dans les tests. */
+    osv?: { baseUrl?: string; fetchImpl?: typeof fetch };
+    /** Délai avant de réévaluer des gates en attente (CI du projet en cours, push pas encore fait). */
+    verificationRetryMs?: number;
   };
 };
 
@@ -188,7 +195,12 @@ export class Orchestrator {
         where not t.paused
           and t.issue_number is not null
           and (t.lease_until is null or t.lease_until < now())
-          and (t.state = 'received' or t.state in (${claimable}) or (t.state = 'waiting_provider' and t.resume_after <= now()))
+          and (
+            t.state = 'received'
+            or t.state in (${claimable})
+            or (t.state = 'waiting_provider' and t.resume_after <= now())
+            or (t.state = 'verifying' and (t.resume_after is null or t.resume_after <= now()))
+          )
           and not exists (
             select 1 from stops s
             where s.org_id = t.org_id and s.lifted_at is null
@@ -282,12 +294,196 @@ export class Orchestrator {
       );
       task = await this.#reload(task.id);
     }
+    if (task.state === "verifying") {
+      await this.verifyTask(task);
+      return;
+    }
     const role = RUNNABLE_STATES[task.state];
     if (!isAgentRole(role)) {
       await this.#deps.db.update(tasks).set({ leaseUntil: null }).where(eq(tasks.id, task.id));
       return;
     }
     await this.#runRole(task, role);
+  }
+
+  /** Une H2 (ou une approbation de chemins protégés) a été donnée pour cette tâche. */
+  async #hasDesignApproval(taskId: string): Promise<boolean> {
+    const [row] = await this.#deps.db
+      .select({ id: approvals.id })
+      .from(approvals)
+      .where(
+        and(
+          eq(approvals.taskId, taskId),
+          eq(approvals.gate, "H2"),
+          eq(approvals.decision, "approve"),
+        ),
+      )
+      .limit(1);
+    return row !== undefined;
+  }
+
+  /**
+   * Phase 5 (WORKFLOW.md §4) : gates rejouées par le worker sur le commit poussé, cloné proprement,
+   * avec la config de la branche par défaut. Rien de ce que l'agent affirme n'est cru.
+   */
+  async verifyTask(task: TaskRow): Promise<void> {
+    const { db, github, driver, config, log } = this.#deps;
+    const repo = await this.#repo(task);
+    if (!repo || !task.headSha || !task.baseSha) {
+      await this.#apply(
+        task,
+        { type: "system_error", reason: "vérification impossible : commit inconnu" },
+        { lastError: "vérification impossible : commit inconnu" },
+      );
+      return;
+    }
+    const retryLater = async (reason: string) => {
+      await db
+        .update(tasks)
+        .set({
+          leaseUntil: null,
+          resumeAfter: new Date(Date.now() + (config.verificationRetryMs ?? 30_000)),
+          lastError: reason,
+        })
+        .where(eq(tasks.id, task.id));
+    };
+    const id = crypto.randomUUID();
+    const pristine = join(config.runsDir, id, "pristine.git");
+    this.#activeRuns.add(`${id}-verify`);
+    try {
+      await mkdir(join(config.runsDir, id), { recursive: true, mode: 0o700 });
+      const token = await github.getRepoToken(repo.ref, { contents: "read" });
+      await clonePristine(github.cloneUrl(repo.ref), pristine, token);
+      try {
+        await revParse(pristine, task.headSha);
+      } catch {
+        await retryLater("en attente du push de la branche");
+        return;
+      }
+      const defaultHead = await revParse(pristine, `refs/heads/${repo.defaultBranch}`);
+      const { config: repoConfig } = parseRepoConfig(
+        await readFileAt(pristine, defaultHead, REPO_CONFIG_PATH),
+      );
+      const approved = await this.#hasDesignApproval(task.id);
+      const { report, files } = await verify(
+        {
+          github,
+          driver,
+          runsDir: config.runsDir,
+          sandboxImage: config.sandboxImage,
+          egressAllow: config.egressAllow,
+          ...(config.osv ? { osv: config.osv } : {}),
+        },
+        {
+          runId: id,
+          taskId: task.id,
+          taskType: task.type,
+          pristine,
+          baseSha: task.baseSha,
+          headSha: task.headSha,
+          config: repoConfig,
+          ref: repo.ref,
+          protectedPathsApproved: approved,
+        },
+      );
+      const outcome = verdict(report);
+      log.info(
+        {
+          taskId: task.id,
+          outcome,
+          failed: report.results.filter((r) => r.status === "fail").map((r) => r.id),
+        },
+        "gates",
+      );
+      if (outcome === "pending") {
+        await retryLater(
+          report.results.find((r) => r.status === "pending")?.details ?? "gates en attente",
+        );
+        return;
+      }
+
+      const storeReport = async (tx: Tx) => {
+        const [last] = await tx
+          .select({ version: artifacts.version })
+          .from(artifacts)
+          .where(and(eq(artifacts.taskId, task.id), eq(artifacts.kind, "gate_report")))
+          .orderBy(desc(artifacts.version))
+          .limit(1);
+        await tx.insert(artifacts).values({
+          orgId: task.orgId,
+          taskId: task.id,
+          kind: "gate_report",
+          version: (last?.version ?? 0) + 1,
+          content: report,
+        });
+        await enqueueEffect(tx, {
+          orgId: task.orgId,
+          kind: "github.check_run",
+          idempotencyKey: `task:${task.id}:gates:${report.commit}`,
+          serialKey: `task:${task.id}`,
+          payload: {
+            taskId: task.id,
+            sha: report.commit,
+            name: "Jules / gates",
+            conclusion: outcome === "pass" ? "success" : "failure",
+            title:
+              outcome === "pass"
+                ? "Gates vertes"
+                : `${report.results.filter((r) => r.status === "fail").length} gate(s) en échec`,
+            summary: renderReport(report),
+          },
+        });
+      };
+
+      if (outcome === "fail") {
+        const failed = report.results.filter((r) => r.status === "fail");
+        await this.#apply(
+          task,
+          { type: "gates_failed" },
+          {
+            lastError: `gates en échec : ${failed.map((r) => r.id).join(", ")}`,
+            resumeAfter: null,
+          },
+          storeReport,
+        );
+        return;
+      }
+      // Risque réel recalculé sur le diff : c'est lui qui fait foi (WORKFLOW.md §3).
+      const stats = {
+        paths: files.map((f) => f.path),
+        additions: files.reduce((n, f) => n + f.added.length, 0),
+        deletions: files.reduce((n, f) => n + f.removed.length, 0),
+      };
+      const real = computeRisk({
+        type: (task.type as Parameters<typeof computeRisk>[0]["type"] | null) ?? "feature",
+        diff: stats,
+        config: repoConfig.risk,
+      });
+      const approvedRisk: Risk = task.risk ?? "low";
+      const final = maxRisk(approvedRisk, real.risk);
+      const order: Record<Risk, number> = { low: 0, medium: 1, high: 2 };
+      if (order[real.risk] > order[approvedRisk] && !approved && task.autonomy !== "L0") {
+        await this.#apply(
+          task,
+          { type: "approval_required", resume: "reviewing" },
+          {
+            risk: final,
+            resumeAfter: null,
+            lastError: `risque réel ${real.risk} (estimé ${approvedRisk}) : ${real.reasons.join(" ; ")}`,
+          },
+          storeReport,
+        );
+        return;
+      }
+      await this.#apply(
+        task,
+        { type: "gates_passed" },
+        { risk: final, resumeAfter: null, lastError: null },
+        storeReport,
+      );
+    } finally {
+      this.#activeRuns.delete(`${id}-verify`);
+    }
   }
 
   async #repo(task: TaskRow): Promise<RepoContext | undefined> {
@@ -401,7 +597,16 @@ export class Orchestrator {
           .where(eq(tasks.id, task.id));
         task = await this.#reload(task.id);
       }
-      await createWorkspace(pristine, workspace, baseSha);
+      // Itération suivante (gates en échec, review, retour humain) : on repart de la tête de la branche.
+      let startSha = baseSha;
+      if (role === "developer" && task.headSha) {
+        try {
+          startSha = await revParse(pristine, task.headSha);
+        } catch {
+          startSha = baseSha;
+        }
+      }
+      await createWorkspace(pristine, workspace, startSha);
       const language = task.language ?? config.language;
 
       // 2. Contexte de l'exécution, puis broker sur un socket Unix propre à l'exécution.
@@ -604,7 +809,14 @@ export class Orchestrator {
         await this.#deliver(
           task,
           run.id,
-          { pristine, workspace, exportDir, baseSha, defaultBranch: repo.defaultBranch },
+          {
+            pristine,
+            workspace,
+            exportDir,
+            startSha,
+            baseSha: task.baseSha ?? baseSha,
+            defaultBranch: repo.defaultBranch,
+          },
           submitted.content as { commitMessage: string },
         );
       } else if (runStatus === "provider_unavailable") {
@@ -697,6 +909,19 @@ export class Orchestrator {
         );
       }
     }
+    const gates = latest("gate_report") as
+      | { commit: string; results: { id: string; name: string; status: string; details: string }[] }
+      | undefined;
+    if (gates && task.state === "building" && gates.results.some((r) => r.status === "fail")) {
+      sections.push(
+        "",
+        "# Rapport des gates sur ta dernière build (à corriger)",
+        "",
+        ...gates.results
+          .filter((r) => r.status === "fail" || r.status === "warn")
+          .map((r) => `- ${r.id} ${r.name} : ${r.status} — ${r.details}`),
+      );
+    }
     if (human.length > 0) {
       const questions = latest("questions") as { questions: string[] } | undefined;
       sections.push("", "# Échanges avec les humains", "");
@@ -728,6 +953,9 @@ export class Orchestrator {
       pristine: string;
       workspace: string;
       exportDir: string;
+      /** Commit de départ du workspace : la base, ou la tête de la branche à l'itération suivante. */
+      startSha: string;
+      /** Base de la tâche, pour le diff complet. */
       baseSha: string;
       defaultBranch: string;
     },
@@ -742,7 +970,7 @@ export class Orchestrator {
       runId: `${runId}-export`,
       image: config.sandboxImage,
       entrypoint: ["sh", "-c", EXPORT_SCRIPT],
-      env: { JULES_BASE_SHA: paths.baseSha },
+      env: { JULES_BASE_SHA: paths.startSha, JULES_TASK_ID: task.id },
       mounts: [
         { source: paths.workspace, target: "/workspace", readOnly: false },
         { source: paths.exportDir, target: "/run/jules-export", readOnly: false },
@@ -769,7 +997,7 @@ export class Orchestrator {
       defaultBranch: paths.defaultBranch,
       force: false,
       changedPaths: changed,
-      protectedPathsApproved: false,
+      protectedPathsApproved: await this.#hasDesignApproval(task.id),
       controls: { stopped: await isStopped(this.#deps.db, task.orgId, { repoId: task.repoId }) },
     });
     await appendAudit(this.#deps.db, {
@@ -779,13 +1007,20 @@ export class Orchestrator {
       target: { type: "task", id: task.id },
       data: { ruleId: decision.ruleId, files: changed.length },
     });
+    if (decision.effect === "require_approval") {
+      // G4.1 : chemins protégés. Un humain approuve (H2), puis le développeur repart de cet état.
+      await this.#apply(
+        task,
+        { type: "approval_required", resume: "building" },
+        { lastError: `${decision.reason}. Réponds \`/jules approve\` pour les accepter.` },
+      );
+      return;
+    }
     if (decision.effect !== "allow") {
       await this.#apply(
         task,
         { type: "limit_reached", reason: decision.ruleId },
-        {
-          lastError: `push ${decision.effect === "deny" ? "refusé" : "soumis à approbation"} : ${decision.reason}`,
-        },
+        { lastError: `push refusé : ${decision.reason}` },
       );
       return;
     }
@@ -887,6 +1122,8 @@ const EXPORT_SCRIPT = [
   "$G add -A",
   "if ! $G diff --cached --quiet; then $G -c user.name=Jules -c user.email=jules@users.noreply.github.com -c commit.gpgsign=false commit -q -F /run/jules-export/message.txt; fi",
   'if [ "$($G rev-parse HEAD)" = "$JULES_BASE_SHA" ]; then exit 3; fi',
+  // Chaque commit porte le trailer Jules-Task, y compris ceux que l'agent a faits lui-même (G4.3).
+  'GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true $G -c user.name=Jules -c user.email=jules@users.noreply.github.com -c commit.gpgsign=false rebase -q --exec "git -c core.hooksPath=/dev/null -c safe.directory=/workspace -c user.name=Jules -c user.email=jules@users.noreply.github.com -c commit.gpgsign=false commit -q --amend --no-edit --no-verify --trailer \\"Jules-Task: $JULES_TASK_ID\\"" "$JULES_BASE_SHA"',
   '$G bundle create -q /run/jules-export/work.bundle HEAD "^$JULES_BASE_SHA"',
 ].join("\n");
 

@@ -238,7 +238,7 @@ D'ici là, si le repo déclare `commands.e2e`, ces tests tournent dans le conten
 | G3 | Le plan couvre la spec | auto | oui | chaque critère → au moins un test prévu |
 | H2 | Validation de la conception | humaine | selon le risque | `/jules approve` |
 | G4.1 | Chemins protégés | auto, avant push | oui, sauf approbation | package `risk` |
-| G4.2 | Aucun secret dans le diff | auto, avant push | oui | gitleaks |
+| G4.2 | Aucun secret dans le diff | auto, avant push | oui | scanner intégré (motifs des fournisseurs, affectations à forte entropie) ; gitleaks en complément plus tard |
 | G4.3 | Messages de commit | auto, avant push | oui | commitlint (Conventional Commits) |
 | G4.4 | Taille du diff | auto, avant push | avertissement | au-delà de `max_diff_lines` |
 | G5.1 | Installation avec lockfile figé | auto | oui | `commands.install` |
@@ -251,7 +251,7 @@ D'ici là, si le repo déclare `commands.e2e`, ces tests tournent dans le conten
 | G5.8 | Intégrité des tests | auto | oui | aucun test supprimé ou ignoré (`.skip`, `xit`, `@Disabled`…) sans approbation humaine ; aucun seuil abaissé |
 | G5.9 | Désactivations de règles | auto | avertissement, transmis au reviewer | nouveaux `eslint-disable`, `@ts-ignore`, `# noqa`, `//nolint` |
 | G5.10 | Analyse de sécurité du code | auto | oui pour une sévérité ≥ high | Semgrep |
-| G5.11 | Dépendances vulnérables | auto | oui pour high ou critical | osv-scanner, si le lockfile a changé |
+| G5.11 | Dépendances vulnérables | auto | oui pour high ou critical | base OSV (api.osv.dev), sur les paquets ajoutés ou modifiés du lockfile ; OSV injoignable = gate en attente |
 | G5.12 | Licences | auto | avertissement | allowlist de licences |
 | G5.13 | Tests e2e | auto | oui s'ils sont déclarés | `commands.e2e` |
 | G5.14 | CI du projet | auto | oui | check suites de la PR au vert |

@@ -23,6 +23,7 @@
     "@jules/config": "workspace:*",
     "@jules/db": "workspace:*",
     "@jules/forge": "workspace:*",
+    "@jules/gates": "workspace:*",
     "@jules/policy": "workspace:*",
     "@jules/risk": "workspace:*",
     "@jules/sandbox": "workspace:*",

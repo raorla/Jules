@@ -36,6 +36,14 @@ const effectPayloads = {
     sha: z.string(),
   }),
   "github.pull_request": z.object({ taskId: z.uuid() }),
+  "github.check_run": z.object({
+    taskId: z.uuid(),
+    sha: z.string(),
+    name: z.string(),
+    conclusion: z.enum(["success", "failure", "neutral", "action_required"]),
+    title: z.string(),
+    summary: z.string(),
+  }),
   "github.reply": z.object({
     installationId: z.number(),
     owner: z.string(),
@@ -214,6 +222,21 @@ const executors: Record<EffectKind, Executor> = {
     }
     await pushBranch(payload.pristineDir, url, payload.branch, token);
     return { branch: payload.branch, sha: payload.sha, operation: "pushed" };
+  },
+
+  "github.check_run": async ({ db, github }, row) => {
+    const p = effectPayloads["github.check_run"].parse(row.payload);
+    const { ref } = await loadTask(db, p.taskId);
+    // Idempotent : le check run de ce nom sur ce commit est retrouvé et mis à jour.
+    const run = await github.upsertCheckRun(ref, {
+      name: p.name,
+      headSha: p.sha,
+      status: "completed",
+      conclusion: p.conclusion,
+      title: p.title,
+      summary: p.summary,
+    });
+    return { checkRunId: run.id };
   },
 
   "github.reply": async ({ github }, row) => {

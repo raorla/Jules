@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { REQUIRED_EVENTS, REQUIRED_PERMISSIONS, type AppInfo } from "./app-setup.js";
 import type {
+  CheckRun,
+  CheckRunInput,
   GitHubApp,
   HookDelivery,
   NewPullRequest,
@@ -25,6 +27,8 @@ export type FakeComment = {
 export class FakeGitHub implements GitHubApp {
   readonly comments: FakeComment[] = [];
   readonly pullRequests: (PullRequest & NewPullRequest & { repo: string })[] = [];
+  /** Check runs par SHA : ceux de Jules, et ceux de la « CI du projet » posés par les tests. */
+  readonly checkRuns = new Map<string, (CheckRun & { summary?: string })[]>();
   /** Dépôts git locaux qui jouent le rôle de GitHub : `owner/repo` → chemin d'un dépôt nu. */
   readonly remotes = new Map<string, string>();
   /** Configuration de l'App, conforme par défaut ; un test peut la modifier. */
@@ -169,6 +173,40 @@ export class FakeGitHub implements GitHubApp {
     this.#maybeFail("getRepoToken");
     await Promise.resolve();
     return "ghs_fauxjetondinstallationpourlestests0000";
+  }
+
+  listCheckRuns(_ref: RepoRef, sha: string): Promise<CheckRun[]> {
+    return Promise.resolve([...(this.checkRuns.get(sha) ?? [])]);
+  }
+
+  upsertCheckRun(_ref: RepoRef, run: CheckRunInput): Promise<{ id: number }> {
+    const runs = this.checkRuns.get(run.headSha) ?? [];
+    this.checkRuns.set(run.headSha, runs);
+    const existing = runs.find((r) => r.name === run.name && r.appId === 1);
+    const value = {
+      id: existing?.id ?? this.#nextId++,
+      name: run.name,
+      status: run.status,
+      conclusion: run.conclusion ?? null,
+      appId: 1,
+      summary: run.summary,
+    };
+    runs.splice(existing ? runs.indexOf(existing) : runs.length, existing ? 1 : 0, value);
+    return Promise.resolve({ id: value.id });
+  }
+
+  /** Pose un check run de la CI du projet (une autre App que Jules). */
+  setProjectCheck(
+    sha: string,
+    name: string,
+    status: CheckRun["status"],
+    conclusion: string | null,
+  ): void {
+    const runs = this.checkRuns.get(sha) ?? [];
+    this.checkRuns.set(sha, [
+      ...runs.filter((r) => r.name !== name),
+      { id: this.#nextId++, name, status, conclusion, appId: 99 },
+    ]);
   }
 
   async findPullRequest(ref: RepoRef, head: string) {

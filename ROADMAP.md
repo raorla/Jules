@@ -158,6 +158,8 @@ Sur un repo de test, puis sur 2 ou 3 de tes vrais repos : une issue `@jules` dev
 
 ### M3 — Gates de vérification (L)
 
+> Statut (27/10/2026) : code livré. Les 8 PR piégées de la DoD sont bloquées par des tests automatisés, avec le vrai conteneur de vérification. Une PR propre passe ; la CI du projet est attendue, puis prise en compte ; un risque réel plus élevé redemande H2. G4.2 utilise un scanner intégré et G5.11 l'API OSV, plutôt que les binaires gitleaks et osv-scanner. G5.10 (Semgrep) et G5.12 (licences) restent à brancher : elles apparaissent en `skip` dans le rapport.
+
 **Livrables**
 - `packages/gates` et le conteneur de vérification, avec la config lue sur la branche par défaut.
 - Les gates G4.x avant push et G5.1 à G5.14, publiées dans le check run `Jules / gates`.

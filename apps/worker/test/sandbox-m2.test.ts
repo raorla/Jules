@@ -193,6 +193,7 @@ describe("M2 : machine à états, phases 1 à 3, gates humaines", () => {
     await s.orchestrator.settle();
     await drainOutbox(deps);
     expect(await rolesRun(task.id)).toEqual(["triager", "specifier", "architect", "developer"]);
+    // Les gates (M3) attendent que le push soit fait : ici, l'outbox ne tourne qu'après.
     expect((await state(task.id))?.state).toBe("verifying");
     expect(s.github.pullRequests).toHaveLength(1);
     const decisions = await t.db
