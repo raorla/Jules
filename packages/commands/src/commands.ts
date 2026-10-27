@@ -1,4 +1,5 @@
 import type { Risk } from "@jules/workflow";
+import { z } from "zod";
 
 // Commandes humaines (WORKFLOW.md §7), communes à GitHub, au web et au desktop. Ce module dit
 // quelle commande est demandée et quel droit elle exige ; l'orchestrateur l'applique.
@@ -118,3 +119,37 @@ export function authorize(
         reason: `\`/jules ${command.name.replace("_", "-")}\` demande le droit ${required} (tu as ${role})`,
       };
 }
+
+/** Rôles Jules (ARCHITECTURE.md §4.2). */
+export type JulesRole = "admin" | "maintainer" | "member" | "viewer";
+
+const JULES_TO_REPO: Record<JulesRole, RepoRole> = {
+  admin: "admin",
+  maintainer: "maintain",
+  member: "write",
+  viewer: "read",
+};
+
+/** Droits effectifs sur un repo : le minimum entre le rôle Jules et la permission GitHub. */
+export function effectiveRole(jules: JulesRole, github: RepoRole): RepoRole {
+  const fromJules = JULES_TO_REPO[jules];
+  return ROLE_ORDER.indexOf(fromJules) >= ROLE_ORDER.indexOf(github) ? fromJules : github;
+}
+
+/** Commandes envoyées par l'api et le desktop : mêmes commandes que dans GitHub, en JSON. */
+export const commandSchema = z.discriminatedUnion("name", [
+  z.object({ name: z.literal("approve") }),
+  z.object({ name: z.literal("revise"), feedback: z.string().trim().min(1).max(4000) }),
+  z.object({ name: z.literal("retry") }),
+  z.object({ name: z.literal("budget"), addUsd: z.number().positive().max(1000) }),
+  z.object({ name: z.literal("pause") }),
+  z.object({ name: z.literal("resume") }),
+  z.object({ name: z.literal("cancel") }),
+  z.object({ name: z.literal("fix"), instructions: z.string().trim().min(1).max(4000) }),
+  z.object({ name: z.literal("stop_all") }),
+  z.object({
+    name: z.literal("lesson"),
+    decision: z.enum(["approve", "reject"]),
+    lessonId: z.string().regex(/^[0-9a-f-]{8,36}$/),
+  }),
+]);

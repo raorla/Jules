@@ -24,6 +24,7 @@
     "@jules/db": "workspace:*",
     "@jules/forge": "workspace:*",
     "@jules/gates": "workspace:*",
+    "@jules/metrics": "workspace:*",
     "@jules/policy": "workspace:*",
     "@jules/risk": "workspace:*",
     "@jules/sandbox": "workspace:*",
@@ -33,6 +34,7 @@
     "@opentelemetry/exporter-trace-otlp-http": "0.223.0",
     "@opentelemetry/sdk-node": "0.223.0",
     "fastify": "5.12.7",
+    "libsodium-wrappers": "0.8.4",
     "pg": "8.23.1",
     "pino": "10.4.0",
     "zod": "4.6.7"
@@ -41,6 +43,7 @@
     "@jules/agent-runner": "workspace:*",
     "@jules/gateway": "workspace:*",
     "@types/dockerode": "4.0.2",
+    "@types/libsodium-wrappers": "0.8.2",
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
     "dockerode": "5.0.1",

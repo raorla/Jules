@@ -337,7 +337,7 @@ type CommandResult =
     }
   | { ok: false; reason: string };
 
-async function applyCommand(
+export async function applyCommand(
   tx: Tx,
   deps: WorkerDeps,
   task: TaskRow,

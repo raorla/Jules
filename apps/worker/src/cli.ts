@@ -16,7 +16,7 @@ import {
 import { compareEvals, runEvals, type EvalResult } from "./evals.js";
 import { createLogger } from "./logger.js";
 import { liftStop, stopAll } from "./emergency.js";
-import { computeMetrics, renderMetrics } from "./metrics.js";
+import { computeMetrics, renderMetrics } from "@jules/metrics";
 import { purgeExpired } from "./retention.js";
 import { reconcileDeliveries } from "./reconcile.js";
 

@@ -40,6 +40,7 @@ export class FakeGitHub implements GitHubApp {
     number,
     { path: string; line: number | null; body: string }[]
   >();
+  readonly issues: { number: number; repo: string; title: string; body: string }[] = [];
   /** Règles de branche renvoyées par `getBranchRules`. */
   branchRules: { type: string; parameters?: Record<string, unknown> }[] = [];
   /** Check runs par SHA : ceux de Jules, et ceux de la « CI du projet » posés par les tests. */
@@ -292,6 +293,19 @@ export class FakeGitHub implements GitHubApp {
 
   listReviewComments(_ref: RepoRef, _number: number, reviewId: number) {
     return Promise.resolve(this.humanReviewComments.get(reviewId) ?? []);
+  }
+
+  createIssue(ref: RepoRef, issue: { title: string; body: string }) {
+    const created = { number: this.#nextId++, repo: `${ref.owner}/${ref.repo}`, ...issue };
+    this.issues.push(created);
+    return Promise.resolve({ number: created.number });
+  }
+
+  findIssueByMarker(ref: RepoRef, marker: string) {
+    const found = this.issues.find(
+      (i) => i.repo === `${ref.owner}/${ref.repo}` && i.body.includes(marker),
+    );
+    return Promise.resolve(found ? { number: found.number } : undefined);
   }
 
   getBranchRules() {

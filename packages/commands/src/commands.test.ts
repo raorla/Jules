@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { authorize, hasRole, parseCommand, prose, requiredRole } from "./commands.js";
+import {
+  authorize,
+  commandSchema,
+  effectiveRole,
+  hasRole,
+  parseCommand,
+  prose,
+  requiredRole,
+} from "./commands.js";
 
 describe("parseCommand", () => {
   it.each([
@@ -89,5 +97,23 @@ describe("droits (WORKFLOW.md §7)", () => {
   it("ordonne les rôles", () => {
     expect(hasRole("admin", "write")).toBe(true);
     expect(hasRole("triage", "write")).toBe(false);
+  });
+});
+
+describe("droits effectifs (ARCHITECTURE.md §4.2)", () => {
+  it.each([
+    ["admin", "write", "write"],
+    ["member", "admin", "write"],
+    ["viewer", "admin", "read"],
+    ["maintainer", "maintain", "maintain"],
+    ["admin", "none", "none"],
+  ] as const)("Jules %s et GitHub %s donnent %s", (jules, github, expected) => {
+    expect(effectiveRole(jules, github)).toBe(expected);
+  });
+
+  it("valide les commandes reçues en JSON", () => {
+    expect(commandSchema.safeParse({ name: "approve" }).success).toBe(true);
+    expect(commandSchema.safeParse({ name: "revise", feedback: "" }).success).toBe(false);
+    expect(commandSchema.safeParse({ name: "rm" }).success).toBe(false);
   });
 });

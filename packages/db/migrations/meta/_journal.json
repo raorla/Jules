@@ -50,6 +50,20 @@
       "when": 1793097957028,
       "tag": "0006_lessons",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793098799633,
+      "tag": "0007_m6_api",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793098810329,
+      "tag": "0008_m6_notify",
+      "breakpoints": true
     }
   ]
 }

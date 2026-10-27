@@ -6,6 +6,7 @@ import { SandboxDriver, parseAllowlist } from "@jules/sandbox";
 import { SecretStore, keyringFromEnv } from "@jules/secrets";
 import { Masker } from "./broker/masking.js";
 import { stopAll } from "./emergency.js";
+import { ensureWorkerKey } from "./sealed-secrets.js";
 import { ANTHROPIC_KEY_SECRET, GITHUB_APP_KEY_SECRET, loadWorkerEnv } from "./config.js";
 import { createLogger } from "./logger.js";
 import { Orchestrator } from "./orchestrator.js";
@@ -41,6 +42,8 @@ const anthropicKey = apiKey.toString("utf8").trim();
 privateKey.fill(0);
 apiKey.fill(0);
 await mkdir(env.JULES_RUNS_DIR, { recursive: true, mode: 0o700 });
+// Clé publique des sealed boxes : l'api s'en sert pour les secrets saisis dans l'interface.
+await ensureWorkerKey(database.db, store);
 
 const driver = new SandboxDriver({
   runtime: env.JULES_SANDBOX_RUNTIME,
@@ -87,7 +90,7 @@ const worker = new Worker(
         stopAll(database.db, driver, { orgId: DEFAULT_ORG_ID, reason: "/jules stop-all", actorId }),
     },
   },
-  { databaseUrl: env.DATABASE_URL, orchestrator, runsDir: env.JULES_RUNS_DIR },
+  { databaseUrl: env.DATABASE_URL, orchestrator, runsDir: env.JULES_RUNS_DIR, secrets: store },
 );
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

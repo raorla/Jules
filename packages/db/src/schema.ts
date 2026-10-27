@@ -370,7 +370,8 @@ export const commands = pgTable(
     authorId: uuid("author_id").references(() => users.id),
     name: text("name").notNull(),
     args: jsonb("args").notNull(),
-    decision: text("decision", { enum: ["applied", "denied", "rejected"] }).notNull(),
+    /** `pending` : écrite par l'api ou le desktop, le worker la vérifie puis l'applique (§4.2). */
+    decision: text("decision", { enum: ["pending", "applied", "denied", "rejected"] }).notNull(),
     reason: text("reason").notNull(),
     createdAt: createdAt(),
   },
@@ -420,3 +421,102 @@ export const lessons = pgTable(
   },
   (t) => [index("lessons_repo_status_idx").on(t.repoId, t.status)],
 );
+
+/** Rôles Jules (ARCHITECTURE.md §4.2) ; les droits effectifs sur un repo sont le minimum avec GitHub. */
+export const memberships = pgTable(
+  "memberships",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    role: text("role", { enum: ["admin", "maintainer", "member", "viewer"] }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("memberships_org_user_idx").on(t.orgId, t.userId)],
+);
+
+/** Sessions web (cookie HttpOnly) et jetons du desktop. Seul le hash du jeton est stocké. */
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    kind: text("kind", { enum: ["web", "desktop"] }).notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    csrfToken: text("csrf_token").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    /** Authentification renforcée par passkey, valable quelques minutes (§4.2). */
+    stepUpUntil: timestamp("step_up_until", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("sessions_user_idx").on(t.userId)],
+);
+
+export const passkeys = pgTable(
+  "passkeys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    credentialId: text("credential_id").notNull().unique(),
+    publicKey: text("public_key").notNull(),
+    counter: bigint("counter", { mode: "number" }).notNull().default(0),
+    transports: jsonb("transports"),
+    label: text("label").notNull(),
+    createdAt: createdAt(),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  },
+  (t) => [index("passkeys_user_idx").on(t.userId)],
+);
+
+export const webauthnChallenges = pgTable("webauthn_challenges", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: orgId(),
+  sessionId: uuid("session_id")
+    .notNull()
+    .references(() => sessions.id),
+  kind: text("kind", { enum: ["register", "step_up"] }).notNull(),
+  challenge: text("challenge").notNull(),
+  /** Action sensible que la passkey va autoriser. */
+  purpose: text("purpose").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: createdAt(),
+});
+
+/** Clé publique du worker pour les sealed boxes : l'api chiffre, seul le worker déchiffre (§4.2). */
+export const workerKeys = pgTable("worker_keys", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: orgId(),
+  publicKey: text("public_key").notNull(),
+  createdAt: createdAt(),
+});
+
+/** Secrets saisis dans l'interface, scellés pour le worker, en attente d'import dans `secrets`. */
+export const secretSubmissions = pgTable("secret_submissions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: orgId(),
+  name: text("name").notNull(),
+  sealed: text("sealed").notNull(),
+  workerKeyId: uuid("worker_key_id")
+    .notNull()
+    .references(() => workerKeys.id),
+  submittedBy: uuid("submitted_by").references(() => users.id),
+  createdAt: createdAt(),
+});
+
+export const evalRuns = pgTable("eval_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: orgId(),
+  label: text("label").notNull(),
+  total: numeric("total", { precision: 6, scale: 1 }).notNull(),
+  result: jsonb("result").notNull(),
+  createdAt: createdAt(),
+});

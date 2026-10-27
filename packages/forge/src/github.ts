@@ -71,6 +71,9 @@ export interface GitHubApp {
     ref: RepoRef,
     branch: string,
   ): Promise<{ type: string; parameters?: Record<string, unknown> }[]>;
+  createIssue(ref: RepoRef, issue: { title: string; body: string }): Promise<{ number: number }>;
+  /** Issue récente de l'App qui contient `marker` (création idempotente après un crash). */
+  findIssueByMarker(ref: RepoRef, marker: string): Promise<{ number: number } | undefined>;
   /** Check runs d'un commit (la CI du projet, et ceux de Jules). */
   listCheckRuns(ref: RepoRef, sha: string): Promise<CheckRun[]>;
   /** Crée ou met à jour le check run `name` de ce commit. */
@@ -233,6 +236,36 @@ export class OctokitGitHubApp implements GitHubApp {
       pull_number: number,
       ...update,
     });
+  }
+
+  async createIssue(
+    ref: RepoRef,
+    issue: { title: string; body: string },
+  ): Promise<{ number: number }> {
+    const octokit = await this.#installation(ref, { issues: "write" });
+    const { data } = await octokit.rest.issues.create({
+      owner: ref.owner,
+      repo: ref.repo,
+      title: issue.title,
+      body: issue.body,
+    });
+    return { number: data.number };
+  }
+
+  async findIssueByMarker(ref: RepoRef, marker: string): Promise<{ number: number } | undefined> {
+    const octokit = await this.#installation(ref, { issues: "read" });
+    const { data } = await octokit.rest.issues.listForRepo({
+      owner: ref.owner,
+      repo: ref.repo,
+      state: "all",
+      sort: "created",
+      direction: "desc",
+      per_page: 100,
+    });
+    const found = data.find(
+      (i) => i.performed_via_github_app?.id === this.#appId && (i.body ?? "").includes(marker),
+    );
+    return found ? { number: found.number } : undefined;
   }
 
   async markReadyForReview(ref: RepoRef, pr: PullRequest): Promise<void> {

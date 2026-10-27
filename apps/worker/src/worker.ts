@@ -1,4 +1,5 @@
 import { CHANNELS } from "@jules/db";
+import type { SecretStore } from "@jules/secrets";
 import { checkAppSetup } from "@jules/forge";
 import pg from "pg";
 import type { WorkerDeps } from "./deps.js";
@@ -6,6 +7,8 @@ import { drainEvents } from "./inbox.js";
 import { drainOutbox } from "./outbox.js";
 import type { Orchestrator } from "./orchestrator.js";
 import { purgeExpired } from "./retention.js";
+import { drainSecretSubmissions } from "./sealed-secrets.js";
+import { drainWebCommands } from "./web-commands.js";
 import { GITHUB_DELIVERY_RETENTION_MS, reconcileDeliveries } from "./reconcile.js";
 
 // Boucle du worker. LISTEN/NOTIFY réveille le traitement dès qu'un événement ou un effet arrive ;
@@ -17,6 +20,8 @@ export type WorkerOptions = {
   orchestrator?: Orchestrator;
   /** Dossier des exécutions : la purge de rétention y passe toutes les heures. */
   runsDir?: string;
+  /** Coffre des secrets : le worker y importe ceux saisis dans l'interface (scellés pour lui). */
+  secrets?: SecretStore;
   pollMs?: number;
   reconcileEveryMs?: number;
   reconcileLookbackMs?: number;
@@ -29,12 +34,12 @@ export class AppSetupError extends Error {
   }
 }
 
-type LoopName = "events" | "outbox" | "tasks";
+type LoopName = "events" | "outbox" | "tasks" | "commands";
 type Loop = { running: boolean; again: boolean; run: () => Promise<number> };
 
 export class Worker {
   readonly #deps: WorkerDeps;
-  readonly #options: Required<Omit<WorkerOptions, "orchestrator" | "runsDir">>;
+  readonly #options: Required<Omit<WorkerOptions, "orchestrator" | "runsDir" | "secrets">>;
   readonly #runsDir: string | undefined;
   readonly #orchestrator: Orchestrator | undefined;
   readonly #loops: Record<LoopName, Loop>;
@@ -44,7 +49,7 @@ export class Worker {
 
   constructor(deps: WorkerDeps, options: WorkerOptions) {
     this.#deps = deps;
-    const { orchestrator, runsDir, ...rest } = options;
+    const { orchestrator, runsDir, secrets, ...rest } = options;
     this.#runsDir = runsDir;
     this.#options = {
       pollMs: 5_000,
@@ -61,6 +66,13 @@ export class Worker {
         again: false,
         run: () => (orchestrator ? orchestrator.drainTasks() : Promise.resolve(0)),
       },
+      commands: {
+        running: false,
+        again: false,
+        run: async () =>
+          (await drainWebCommands(deps)) +
+          (secrets ? await drainSecretSubmissions(deps.db, secrets) : 0),
+      },
     };
   }
 
@@ -74,11 +86,13 @@ export class Worker {
     this.#kick("events");
     this.#kick("outbox");
     this.#kick("tasks");
+    this.#kick("commands");
     this.#timers.push(
       setInterval(() => {
         this.#kick("events");
         this.#kick("outbox");
         this.#kick("tasks");
+        this.#kick("commands");
       }, this.#options.pollMs),
       setInterval(() => void this.#recover(), 60_000),
       setInterval(() => void this.#purge(), 3600_000),
@@ -185,7 +199,13 @@ export class Worker {
   async #listen(): Promise<void> {
     const client = new pg.Client({ connectionString: this.#options.databaseUrl });
     client.on("notification", (message) => {
-      this.#kick(message.channel === CHANNELS.outbox ? "outbox" : "events");
+      this.#kick(
+        message.channel === CHANNELS.outbox
+          ? "outbox"
+          : message.channel === CHANNELS.commands
+            ? "commands"
+            : "events",
+      );
     });
     client.on("error", (error) => {
       this.#deps.log.warn({ err: error.message }, "connexion LISTEN perdue, reconnexion");
@@ -198,6 +218,7 @@ export class Worker {
     await client.connect();
     await client.query(`LISTEN ${CHANNELS.events}`);
     await client.query(`LISTEN ${CHANNELS.outbox}`);
+    await client.query(`LISTEN ${CHANNELS.commands}`);
     this.#listener = client;
   }
 

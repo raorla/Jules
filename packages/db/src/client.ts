@@ -35,4 +35,6 @@ export async function migrate(db: Db): Promise<void> {
 export const CHANNELS = {
   events: "jules_events",
   outbox: "jules_outbox",
+  tasks: "jules_tasks",
+  commands: "jules_commands",
 } as const;

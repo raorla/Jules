@@ -1254,6 +1254,41 @@ export class Orchestrator {
     const branch = branchName(task.issueNumber ?? 0, task.title);
     const head = await importBundle(paths.pristine, join(paths.exportDir, "work.bundle"), branch);
     const changed = await changedPaths(paths.pristine, paths.baseSha, head);
+    // Diff complet, masqué, pour l'interface (page de la tâche) et le reviewer.
+    const diffText = this.#deps.masker.mask(
+      await git(["diff", "--no-color", "--no-ext-diff", "--no-textconv", paths.baseSha, head], {
+        cwd: paths.pristine,
+      }),
+    );
+    await this.#deps.db
+      .insert(artifacts)
+      .values({
+        orgId: task.orgId,
+        taskId: task.id,
+        runId,
+        kind: "diff",
+        version: 1,
+        content: {
+          base: paths.baseSha,
+          head,
+          files: changed,
+          text: diffText.slice(0, 300_000),
+          truncated: diffText.length > 300_000,
+        },
+      })
+      .onConflictDoUpdate({
+        target: [artifacts.taskId, artifacts.kind, artifacts.version],
+        set: {
+          content: {
+            base: paths.baseSha,
+            head,
+            files: changed,
+            text: diffText.slice(0, 300_000),
+            truncated: diffText.length > 300_000,
+          },
+          runId,
+        },
+      });
     const decision = decide({
       action: "push",
       branch,

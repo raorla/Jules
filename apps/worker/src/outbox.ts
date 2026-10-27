@@ -57,6 +57,7 @@ const effectPayloads = {
   "github.pull_request": z.object({ taskId: z.uuid() }),
   "github.review": z.object({ taskId: z.uuid(), reviewVersion: z.number().int().positive() }),
   "github.pr_ready": z.object({ taskId: z.uuid() }),
+  "github.create_issue": z.object({ taskId: z.uuid(), requester: z.string() }),
   "github.setup": z.object({
     installationId: z.number(),
     owner: z.string(),
@@ -439,6 +440,42 @@ const executors: Record<EffectKind, Executor> = {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  },
+
+  "github.create_issue": async ({ db, github }, row) => {
+    const p = effectPayloads["github.create_issue"].parse(row.payload);
+    const [found] = await db
+      .select({ task: tasks, repo: repos, installation: installations })
+      .from(tasks)
+      .innerJoin(repos, eq(repos.id, tasks.repoId))
+      .innerJoin(installations, eq(installations.id, repos.installationId))
+      .where(eq(tasks.id, p.taskId));
+    if (!found) {
+      throw new Error(`tâche ${p.taskId} introuvable`);
+    }
+    const [owner, name] = found.repo.fullName.split("/") as [string, string];
+    const ref = { installationId: found.installation.githubInstallationId, owner, repo: name };
+    // Tâche créée depuis le web : l'issue garde la traçabilité dans GitHub (§10). Pas de mention de
+    // Jules dans le texte, sinon le webhook créerait une seconde tâche.
+    const marker = `<!-- jules:task=${p.taskId} -->`;
+    const issue =
+      (await github.findIssueByMarker(ref, marker)) ??
+      (await github.createIssue(ref, {
+        title: found.task.title,
+        body: `${found.task.request.replaceAll("@", "@\u200b")}\n\n${marker}\n<sub>Créée depuis l'interface de Jules par ${p.requester}.</sub>`,
+      }));
+    await db
+      .update(tasks)
+      .set({ issueNumber: issue.number, updatedAt: sql`now()` })
+      .where(eq(tasks.id, p.taskId));
+    await enqueueEffect(db, {
+      orgId: found.task.orgId,
+      kind: "github.status_comment",
+      idempotencyKey: `task:${p.taskId}:status:created`,
+      serialKey: `task:${p.taskId}`,
+      payload: { taskId: p.taskId },
+    });
+    return { issueNumber: issue.number };
   },
 
   "github.pr_ready": async ({ db, github }, row) => {
