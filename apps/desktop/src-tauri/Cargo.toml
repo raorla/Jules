@@ -1,4 +1,5 @@
 # Shell Tauri du desktop (M9). La logique testable vit dans ../core (`cargo test` sans Tauri).
+# Les plugins sont épinglés (`=`) sur la version de leur paquet npm : `tauri build` refuse un écart de version mineure.
 [package]
 name = "jules-desktop"
 version = "0.1.0"
@@ -16,10 +17,12 @@ tauri-build = { version = "2.7.2", features = [] }
 jules-desktop-core = { path = "../core" }
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 serde = { version = "1.0.229", features = ["derive"] }
+# `tauri::generate_context!` produit du code qui appelle serde_json : il doit être une dépendance directe.
+serde_json = "1.0.154"
 tauri = { version = "2.12.3", features = ["tray-icon"] }
 tauri-plugin-dialog = "2.8.2"
-tauri-plugin-notification = "2.6.0"
+tauri-plugin-notification = "=2.6.0"
 tauri-plugin-opener = "2.7.1"
 tauri-plugin-process = "2.4.0"
 tauri-plugin-single-instance = "2.5.3"
-tauri-plugin-updater = "2.13.3"
+tauri-plugin-updater = "=2.13.3"

@@ -11,16 +11,22 @@ L'app desktop de Jules (Tauri 2) : la même interface que le web (`packages/ui`)
 
 ## Développer
 
-Sous Linux, Tauri demande les en-têtes de WebKitGTK :
+Sous Linux, Tauri demande les en-têtes de WebKitGTK, et le trousseau ceux de D-Bus :
 
 ```bash
-sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf build-essential
+sudo apt install libwebkit2gtk-4.1-dev libdbus-1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf build-essential
 ```
 
 ```bash
 pnpm --filter @jules/desktop tauri dev           # l'app, branchée sur Vite
 cargo test --manifest-path apps/desktop/core/Cargo.toml
 pnpm --filter @jules/desktop e2e                 # connexion, version trop ancienne, notification, mode local
+```
+
+Paquets Linux d'essai, sur ta machine (AppImage, deb et rpm dans `src-tauri/target/release/bundle/`) : sans clé de signature, on désactive les archives de mise à jour. Ces paquets ne se publient jamais.
+
+```bash
+pnpm --filter @jules/desktop tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
 ```
 
 ## Publier une version signée
