@@ -13,11 +13,11 @@ import {
   Search,
   Server as ServerIcon,
   Settings,
-  ShieldAlert,
   ShieldHalf,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { JulesLogo } from "./logo.js";
 import { api, type Me } from "./api.js";
 import { Chip, Dialog, useSensitiveAction } from "./components.js";
 import { useDesktopNotifications } from "./desktop.js";
@@ -172,7 +172,7 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
     <div className="app">
       <aside className="sidebar" aria-label="Navigation">
         <div className="brand">
-          <ShieldAlert aria-hidden="true" />
+          <JulesLogo />
           Jules
         </div>
         <nav>

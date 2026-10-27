@@ -10,6 +10,8 @@ import {
   LOCAL_INSTALLATION_ID,
   and,
   artifacts,
+  commands,
+  desc,
   eq,
   outbox,
   registerLocalRepo,
@@ -104,6 +106,31 @@ await t.db.insert(artifacts).values({
   content: { text: diff },
 });
 
+// Une tâche dont le tri a posé des questions : en mode local, on y répond depuis l'app.
+const asked = await forge.createIssue(ref, { title: "Ajouter une fonction su", body: "su" });
+const [questioned] = await t.db
+  .insert(tasks)
+  .values({
+    orgId: DEFAULT_ORG_ID,
+    repoId: repo.id,
+    agent: "developer",
+    title: "Ajouter une fonction su",
+    request: "su",
+    state: "awaiting_info",
+    resumeState: "specifying",
+    risk: "low",
+    autonomy: "L1",
+    issueNumber: asked.number,
+  })
+  .returning();
+await t.db.insert(artifacts).values({
+  orgId: DEFAULT_ORG_ID,
+  taskId: questioned!.id,
+  kind: "questions",
+  version: 1,
+  content: { questions: ["Une soustraction sub(a, b) ou une somme sum(...) ?"] },
+});
+
 const app = await buildApi({
   db: t.db,
   pool: t.pool,
@@ -147,7 +174,14 @@ const control = createServer((req, res) => {
   res.setHeader("content-type", "application/json");
   const reply = (value: unknown) => res.end(JSON.stringify(value));
   if (req.url === "/__setup") {
-    reply({ taskId: task!.id, second });
+    reply({ taskId: task!.id, questionedId: questioned!.id, second });
+  } else if (req.url === "/__commands") {
+    void t.db
+      .select({ name: commands.name, args: commands.args, decision: commands.decision })
+      .from(commands)
+      .orderBy(desc(commands.createdAt))
+      .limit(1)
+      .then(reply);
   } else if (req.url === "/__drain" && req.method === "POST") {
     void drainMerges().then((count) => reply({ count }));
   } else if (req.url === "/__folder") {

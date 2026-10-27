@@ -251,7 +251,8 @@ export type Command =
   | { name: "approve" | "retry" | "cancel" | "pause" | "resume" | "stop_all" }
   | { name: "revise"; feedback: string }
   | { name: "fix"; instructions: string }
-  | { name: "budget"; addUsd: number };
+  | { name: "budget"; addUsd: number }
+  | { name: "answer"; text: string };
 
 export class ApiError extends Error {
   constructor(

@@ -74,7 +74,11 @@
     "timeline": "Chronologie",
     "transcript": "Transcription",
     "no_calls": "Aucun appel d'outil.",
-    "no_events": "Rien pour l'instant."
+    "no_events": "Rien pour l'instant.",
+    "answer_title": "Jules attend ta réponse",
+    "answer_label": "Ta réponse",
+    "answer_placeholder": "Réponds aux questions ci-dessus : Jules reprend la tâche avec ta réponse.",
+    "answer_send": "Envoyer la réponse"
   },
   "phase": {
     "triage": "Réception",

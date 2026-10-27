@@ -16,7 +16,9 @@ export type Command =
   | { name: "cancel" }
   | { name: "fix"; instructions: string }
   | { name: "stop_all" }
-  | { name: "lesson"; decision: "approve" | "reject"; lessonId: string };
+  | { name: "lesson"; decision: "approve" | "reject"; lessonId: string }
+  /** Réponse aux questions de l'agent depuis le web ou le desktop ; sur GitHub, un simple commentaire. */
+  | { name: "answer"; text: string };
 
 export type ParsedCommand = { command: Command } | { error: string };
 
@@ -152,4 +154,5 @@ export const commandSchema = z.discriminatedUnion("name", [
     decision: z.enum(["approve", "reject"]),
     lessonId: z.string().regex(/^[0-9a-f-]{8,36}$/),
   }),
+  z.object({ name: z.literal("answer"), text: z.string().trim().min(1).max(8000) }),
 ]);

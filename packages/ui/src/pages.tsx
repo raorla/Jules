@@ -8,7 +8,9 @@ import {
   History,
   KeyRound,
   ListChecks,
+  MessageCircleQuestion,
   Plus,
+  Send,
   ShieldCheck,
 } from "lucide-react";
 import { useState } from "react";
@@ -32,6 +34,7 @@ import { useDesktopSession } from "./desktop.js";
 import { DesktopModeCard, LocalMergeCard, LocalModelAccessCard, LocalReposCard } from "./local.js";
 import { OrgSettingsCard } from "./security.js";
 import {
+  AiBadge,
   Card,
   Chip,
   CostMeter,
@@ -197,6 +200,77 @@ export function TasksPage() {
           {notice && <p role="status">{notice}</p>}
         </form>
       </Card>
+    </div>
+  );
+}
+
+/**
+ * Questions de l'agent (état `awaiting_info`) et la réponse, depuis l'app : sur GitHub, on répond
+ * dans l'issue ; en mode local, il n'y a pas d'issue, et c'est le seul moyen de relancer la tâche.
+ * La réponse est une commande, revérifiée par le worker comme un commentaire.
+ */
+function AnswerCard({ detail }: { detail: TaskDetail }) {
+  const { t } = useTranslation();
+  const client = useQueryClient();
+  const [text, setText] = useState("");
+  const questions =
+    (
+      detail.artifacts.filter((a) => a.kind === "questions").at(-1)?.content as
+        { questions?: string[] } | undefined
+    )?.questions ?? [];
+  const send = useMutation({
+    mutationFn: () => sendCommand(detail.task.id, { name: "answer", text }),
+    onSuccess: () => {
+      setText("");
+      void client.invalidateQueries({ queryKey: ["task", detail.task.id] });
+    },
+  });
+  return (
+    <div className="ac" style={{ padding: 18 }}>
+      <form
+        className="stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          send.mutate();
+        }}
+      >
+        <p style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <MessageCircleQuestion aria-hidden="true" width={16} height={16} />
+          <strong>{t("task.answer_title")}</strong>
+          <AiBadge />
+        </p>
+        {questions.length > 0 && (
+          <ol className="ink-2" style={{ paddingLeft: 20, margin: 0 }}>
+            {questions.map((q, i) => (
+              <li key={i}>{q}</li>
+            ))}
+          </ol>
+        )}
+        <textarea
+          className="field"
+          aria-label={t("task.answer_label")}
+          placeholder={t("task.answer_placeholder")}
+          rows={4}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
+        <div>
+          <button className="pill primary" type="submit" disabled={!text.trim() || send.isPending}>
+            <Send aria-hidden="true" />
+            {t("task.answer_send")}
+          </button>
+        </div>
+        {send.isSuccess && (
+          <p role="status" className="chip ok">
+            {t("task.sent")}
+          </p>
+        )}
+        {send.isError && (
+          <p role="alert" className="chip crit">
+            {send.error instanceof Error ? send.error.message : String(send.error)}
+          </p>
+        )}
+      </form>
     </div>
   );
 }
@@ -403,6 +477,8 @@ export function TaskPage() {
   // Une tâche qui attend ton accord montre la décision en premier, avant les artefacts (aussi sur mobile).
   const deciding =
     task.state === "awaiting_spec_approval" || task.state === "awaiting_design_approval";
+  // De même pour des questions de l'agent : la réponse vient en tête.
+  const answering = task.state === "awaiting_info";
   const gates = artifacts.filter((a) => a.kind === "gate_report").at(-1)?.content as
     { results: Parameters<typeof GateReport>[0]["results"] } | undefined;
   const diff = artifacts.filter((a) => a.kind === "diff").at(-1)?.content as
@@ -430,9 +506,10 @@ export function TaskPage() {
           </div>
         )}
       {deciding && <TaskActions detail={detail.data} />}
+      {answering && <AnswerCard detail={detail.data} />}
       <div className="grid-2">
         <div className="stack">
-          <ArtifactCards artifacts={artifacts} />
+          <ArtifactCards artifacts={artifacts} answering={answering} />
           {gates && (
             <Card title={t("task.gates")} icon={<ShieldCheck aria-hidden="true" />}>
               <GateReport results={gates.results} />

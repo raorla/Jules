@@ -339,6 +339,7 @@ Chaque commande existe aussi sous forme de bouton dans l'interface web et dans l
 |---|---|---|---|
 | `@jules <demande>` ou label `jules` | issue | crée la tâche | `write` ou plus |
 | *(répondre dans l'issue)* | issue | quand la tâche est en `awaiting_info`, le commentaire suivant d'une personne autorisée sert de réponse | `write` ou plus |
+| *(répondre dans l'app)* | page de la tâche, web ou desktop | même effet, par la commande `answer` revérifiée par le worker ; seul moyen en mode local, sans issue GitHub | `write` ou plus |
 | `/jules approve` | issue | valide la gate humaine en attente (H1 ou H2) | `write` ou plus ; `maintain` ou CODEOWNER si le risque est `high` |
 | `/jules revise <retour>` | issue | refait la phase en cours avec ce retour | `write` ou plus |
 | `/jules fix <instructions>` | PR | nouvelle itération de développement sur la même branche | `write` ou plus |

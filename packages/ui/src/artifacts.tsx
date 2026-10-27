@@ -209,7 +209,14 @@ function PlanReportView({ report }: { report: PlanReport }) {
 }
 
 /** Dernière version de chaque artefact utile, dans l'ordre des phases. */
-export function ArtifactCards({ artifacts }: { artifacts: Artifact[] }) {
+/** `answering` : les questions sont déjà en tête de page, avec le champ de réponse. */
+export function ArtifactCards({
+  artifacts,
+  answering = false,
+}: {
+  artifacts: Artifact[];
+  answering?: boolean;
+}) {
   const { t } = useTranslation();
   const latest = (kind: string) => artifacts.filter((a) => a.kind === kind).at(-1);
   const triage = latest("triage");
@@ -228,7 +235,7 @@ export function ArtifactCards({ artifacts }: { artifacts: Artifact[] }) {
   );
   return (
     <>
-      {questions && (
+      {questions && !answering && (
         <Card title={title(t("task.questions"), questions)}>
           <ol className="card-body ink-2" style={{ paddingLeft: 36, margin: 0 }}>
             {(questions.content as { questions: string[] }).questions.map((q, i) => (

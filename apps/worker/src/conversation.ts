@@ -479,6 +479,16 @@ export async function applyCommand(
       const r = await applyTransition(tx, task, { type: "human_changes_requested" }, { actor });
       return r.ok ? { ok: true, reason: r.reason } : r;
     }
+    case "answer": {
+      // Réponse depuis le web ou le desktop (le mode local n'a pas d'issue GitHub où commenter) :
+      // même effet qu'un commentaire sur l'issue, pour les mêmes droits.
+      if (task.state !== "awaiting_info") {
+        return { ok: false, reason: `aucune question en attente (état \`${task.state}\`)` };
+      }
+      await storeHumanInput(tx, task, "answer", cmd.text);
+      const r = await applyTransition(tx, task, { type: "answer_received" }, { actor });
+      return r.ok ? { ok: true, reason: "réponse transmise : Jules reprend" } : r;
+    }
     case "stop_all":
       return { ok: true, reason: "arrêt d'urgence" };
     case "lesson":

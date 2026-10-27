@@ -27,7 +27,7 @@ Selon le risque et l'autonomie du repo, Jules s'arrête pour te demander ton acc
 - **H1, la spec** : relis les critères d'acceptation (« étant donné, quand, alors »). `/jules approve` pour valider, `/jules revise <ton retour>` pour la refaire ;
 - **H2, la conception** : relis l'approche, les fichiers touchés et le plan de tests. Mêmes commandes.
 
-S'il lui manque une information, la tâche passe en attente : réponds simplement dans l'issue.
+S'il lui manque une information, la tâche passe en attente : réponds simplement dans l'issue, ou dans la carte **Jules attend ta réponse** en tête de la page de la tâche, dans le web ou le desktop. En mode local, sans issue GitHub, c'est là que tu réponds.
 
 La PR arrive avec :
 - la spec, la conception et la matrice de traçabilité (chaque critère → ses tests → leur résultat) ;

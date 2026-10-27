@@ -117,8 +117,11 @@ test("mode local : isolation affichée, dossiers, merge par le bouton, puis mode
   page,
   request,
 }) => {
-  const { taskId, second } = (await (await request.get(`${CONTROL}/__setup`)).json()) as {
+  const { taskId, questionedId, second } = (await (
+    await request.get(`${CONTROL}/__setup`)
+  ).json()) as {
     taskId: string;
+    questionedId: string;
     second: string;
   };
   await openLocalDesktop(page, second);
@@ -211,6 +214,25 @@ test("mode local : isolation affichée, dossiers, merge par le bouton, puis mode
   await expect(merge.getByRole("status")).toContainText("Mergée (", { timeout: 10_000 });
   const { main } = (await (await request.get(`${CONTROL}/__folder`)).json()) as { main: string };
   expect(main).toBe("ada Merge !2 : feat: ajoute mul");
+
+  // Questions de Jules : sans issue GitHub, on répond depuis la page de la tâche ; la réponse part
+  // comme une commande, que le worker revérifie.
+  await page.goto(`/tasks/${questionedId}`);
+  const answer = page.locator(".ac", { hasText: "Jules attend ta réponse" });
+  await expect(answer).toContainText("Une soustraction sub(a, b) ou une somme sum(...) ?");
+  await expect(answer.getByRole("button", { name: "Envoyer la réponse" })).toBeDisabled();
+  await answer
+    .getByRole("textbox", { name: "Ta réponse" })
+    .fill("Une soustraction : sub(a, b) renvoie a - b.");
+  await answer.getByRole("button", { name: "Envoyer la réponse" }).click();
+  await expect(answer.getByRole("status")).toHaveText("Commande envoyée : Jules la vérifie.");
+  expect(await (await request.get(`${CONTROL}/__commands`)).json()).toMatchObject([
+    {
+      name: "answer",
+      args: { name: "answer", text: "Une soustraction : sub(a, b) renvoie a - b." },
+      decision: "pending",
+    },
+  ]);
 
   // Passage au mode connecté, sans réinstaller : l'app redemande le mode, puis l'adresse du serveur.
   await page.getByRole("link", { name: "Réglages" }).click();

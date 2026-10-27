@@ -74,7 +74,11 @@
     "timeline": "Timeline",
     "transcript": "Transcript",
     "no_calls": "No tool calls.",
-    "no_events": "Nothing yet."
+    "no_events": "Nothing yet.",
+    "answer_title": "Jules is waiting for your answer",
+    "answer_label": "Your answer",
+    "answer_placeholder": "Answer the questions above: Jules resumes the task with your answer.",
+    "answer_send": "Send the answer"
   },
   "phase": {
     "triage": "Intake",

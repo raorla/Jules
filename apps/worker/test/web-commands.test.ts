@@ -1,5 +1,7 @@
 import {
   DEFAULT_ORG_ID,
+  and,
+  artifacts,
   commands,
   eq,
   events,
@@ -125,6 +127,42 @@ describe("commandes du web", () => {
     expect(
       github.commentsOn({ installationId: 4242, owner: "acme", repo: "sandbox" }, 300).at(-1)?.body,
     ).toContain("rien à valider");
+  });
+
+  it("répondre aux questions depuis l'app relance la tâche, comme un commentaire sur l'issue", async () => {
+    const { task } = await seedTask(t.db, { issueNumber: 301 });
+    await t.db
+      .update(tasks)
+      .set({ state: "awaiting_info", resumeState: "specifying", risk: "low" })
+      .where(eq(tasks.id, task.id));
+    const ana = await member("ana", "member");
+    const visitor = await member("visiteur", "viewer");
+    github.setRole("ana", "write");
+    github.setRole("visiteur", "read");
+
+    // Les mêmes droits que pour répondre dans l'issue : écriture sur le repo.
+    expect(
+      await webCommand(task.id, visitor.id, { name: "answer", text: "sub(a, b)" }),
+    ).toMatchObject({ decision: "denied" });
+    const answered = await webCommand(task.id, ana.id, {
+      name: "answer",
+      text: "Une soustraction sub(a, b) qui renvoie a - b.",
+    });
+    expect(answered).toMatchObject({ decision: "applied" });
+    const [resumed] = await t.db.select().from(tasks).where(eq(tasks.id, task.id));
+    expect(resumed).toMatchObject({ state: "specifying", resumeState: null });
+    const [input] = await t.db
+      .select()
+      .from(artifacts)
+      .where(and(eq(artifacts.taskId, task.id), eq(artifacts.kind, "human_input")));
+    expect(input?.content).toMatchObject({
+      kind: "answer",
+      text: "Une soustraction sub(a, b) qui renvoie a - b.",
+    });
+    // Plus de question en attente : une seconde réponse est refusée proprement.
+    expect(await webCommand(task.id, ana.id, { name: "answer", text: "encore" })).toMatchObject({
+      decision: "rejected",
+    });
   });
 
   it("le rôle Jules borne aussi les droits GitHub", async () => {

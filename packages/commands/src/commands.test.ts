@@ -115,5 +115,11 @@ describe("droits effectifs (ARCHITECTURE.md §4.2)", () => {
     expect(commandSchema.safeParse({ name: "approve" }).success).toBe(true);
     expect(commandSchema.safeParse({ name: "revise", feedback: "" }).success).toBe(false);
     expect(commandSchema.safeParse({ name: "rm" }).success).toBe(false);
+    // Réponse aux questions de l'agent depuis l'app : un texte non vide, borné, au droit d'écriture.
+    expect(commandSchema.safeParse({ name: "answer", text: "  " }).success).toBe(false);
+    expect(commandSchema.safeParse({ name: "answer", text: "x".repeat(8001) }).success).toBe(false);
+    const answer = commandSchema.parse({ name: "answer", text: " sub(a, b) " });
+    expect(answer).toEqual({ name: "answer", text: "sub(a, b)" });
+    expect(requiredRole(answer, "high")).toBe("write");
   });
 });
