@@ -4,6 +4,10 @@ import { buildApi } from "@jules/api/app";
 import {
   DEFAULT_ORG_ID,
   artifacts,
+  changePlans,
+  deployments,
+  serverCommands,
+  servers,
   commands,
   desc,
   installations,
@@ -14,6 +18,7 @@ import {
   toolCalls,
   users,
   workerKeys,
+  eq,
 } from "@jules/db";
 import { startTestDatabase } from "@jules/db/testing";
 import sodium from "libsodium-wrappers";
@@ -106,6 +111,12 @@ async function seed() {
     .insert(users)
     .values({ orgId: DEFAULT_ORG_ID, login: "vera", kind: "human" })
     .returning();
+  // Une admin sans passkey, pour vérifier qu'une session seule ne suffit pas.
+  const [ada] = await t.db
+    .insert(users)
+    .values({ orgId: DEFAULT_ORG_ID, login: "ada", kind: "human" })
+    .returning();
+  await t.db.insert(memberships).values({ orgId: DEFAULT_ORG_ID, userId: ada!.id, role: "admin" });
   await t.db
     .insert(memberships)
     .values({ orgId: DEFAULT_ORG_ID, userId: viewer!.id, role: "viewer" });
@@ -333,12 +344,175 @@ async function seed() {
 
   await task({
     title: "Mettre à jour les dépendances",
+
     state: "done",
     issueNumber: 40,
     risk: "low",
     autonomy: "L1",
     costUsd: "0.95",
   });
+
+  // DevOps (M7) : un serveur de staging validé, une production dont la clé d'hôte attend un admin,
+  // un plan de production à approuver avec passkey, des déploiements et l'historique des commandes.
+  const [stagingServer] = await t.db
+    .insert(servers)
+    .values({
+      orgId: DEFAULT_ORG_ID,
+      name: "web-staging",
+      host: "10.0.0.11",
+      username: "jules",
+      environment: "staging",
+      level: "D2",
+      repoId: repo!.id,
+      hostKeyStatus: "trusted",
+      hostKeyFingerprint: `SHA256:${"k".repeat(43)}`,
+      offeredFingerprint: `SHA256:${"k".repeat(43)}`,
+      offeredAlgorithm: "ssh-ed25519",
+    })
+    .returning();
+  const [prodServer] = await t.db
+    .insert(servers)
+    .values({
+      orgId: DEFAULT_ORG_ID,
+      name: "web-prod",
+      host: "10.0.0.21",
+      username: "jules",
+      environment: "production",
+      level: "D1",
+      repoId: repo!.id,
+      hostKeyStatus: "awaiting_validation",
+      offeredFingerprint: `SHA256:${"p".repeat(43)}`,
+      offeredAlgorithm: "ssh-ed25519",
+    })
+    .returning();
+  const restart = await task({
+    title: "Redémarrer l'API en production",
+    state: "awaiting_plan_approval",
+    issueNumber: 43,
+    risk: "high",
+    autonomy: "L1",
+    costUsd: "0.31",
+  });
+  await t.db.update(tasks).set({ agent: "devops" }).where(eq(tasks.id, restart.id));
+  const plan = {
+    goal: "Redémarrer l'API après la fuite mémoire",
+    server: "web-prod",
+    environment: "production",
+    actions: [
+      { kind: "command", command: "sudo -n systemctl restart api", reason: "libérer la mémoire" },
+    ],
+    impact: "environ 5 s d'indisponibilité de l'API",
+    verify: ["systemctl is-active api", "https://api.example.com/health"],
+    rollback: ["sudo -n systemctl start api"],
+  };
+  await t.db.insert(changePlans).values({
+    orgId: DEFAULT_ORG_ID,
+    taskId: restart.id,
+    serverId: prodServer!.id,
+    plan,
+    steps: [],
+    planHash: "e2e",
+    environment: "production",
+    status: "pending_approval",
+    expiresAt: new Date(Date.UTC(2030, 0, 1, 12)),
+  });
+  await t.db.insert(artifacts).values({
+    orgId: DEFAULT_ORG_ID,
+    taskId: restart.id,
+    kind: "change_plan",
+    version: 1,
+    model: "claude-opus-5-5",
+    promptVersion: "devops/v1",
+    content: { planId: "e2e", approvalRequired: true, ...plan },
+  });
+  await t.db.insert(changePlans).values({
+    orgId: DEFAULT_ORG_ID,
+    serverId: stagingServer!.id,
+    plan: {
+      goal: "Déployer 9c41d2e en staging",
+      server: "web-staging",
+      environment: "staging",
+      actions: [{ kind: "playbook", name: "deploy", params: { ref: "9c41d2e" } }],
+      impact: "déploiement de 9c41d2e (PR #8)",
+      verify: [],
+      rollback: [],
+    },
+    steps: [],
+    planHash: "e2e",
+    environment: "staging",
+    status: "pending_approval",
+    expiresAt: new Date(Date.UTC(2030, 0, 1, 12)),
+  });
+  const day = (d: number, h: number) => new Date(Date.UTC(2026, 9, d, h));
+  await t.db.insert(deployments).values([
+    {
+      orgId: DEFAULT_ORG_ID,
+      repoId: repo!.id,
+      serverId: stagingServer!.id,
+      environment: "staging",
+      ref: "4f2a9c1d0e",
+      status: "succeeded",
+      playbook: "deploy",
+      pullRequests: [7],
+      mergedAt: day(20, 9),
+      startedAt: day(20, 10),
+      endedAt: day(20, 10),
+      createdAt: day(20, 10),
+    },
+    {
+      orgId: DEFAULT_ORG_ID,
+      repoId: repo!.id,
+      serverId: prodServer!.id,
+      environment: "production",
+      ref: "4f2a9c1d0e",
+      status: "succeeded",
+      playbook: "deploy",
+      pullRequests: [7],
+      mergedAt: day(20, 9),
+      startedAt: day(20, 14),
+      endedAt: day(20, 14),
+      createdAt: day(20, 14),
+    },
+    {
+      orgId: DEFAULT_ORG_ID,
+      repoId: repo!.id,
+      serverId: stagingServer!.id,
+      environment: "staging",
+      ref: "77e0b3a5c2",
+      status: "rolled_back",
+      playbook: "deploy",
+      pullRequests: [8],
+      reason: "étape 3 : HTTP 500 (attendu 200) ; retour arrière effectué",
+      mergedAt: day(22, 9),
+      startedAt: day(22, 10),
+      endedAt: day(22, 10),
+      createdAt: day(22, 10),
+    },
+  ]);
+  await t.db.insert(serverCommands).values([
+    {
+      orgId: DEFAULT_ORG_ID,
+      serverId: stagingServer!.id,
+      source: "agent",
+      command: "systemctl status api",
+      commandClass: "read",
+      decision: "allow",
+      ruleId: "server.read",
+      exitCode: 0,
+      durationMs: 120,
+      output: "● api.service - API\n   Active: active (running)",
+    },
+    {
+      orgId: DEFAULT_ORG_ID,
+      serverId: stagingServer!.id,
+      source: "agent",
+      command: "rm -rf /var",
+      commandClass: "dangerous",
+      decision: "deny",
+      ruleId: "absolute.dangerous",
+      output: "commande dangereuse, toujours refusée",
+    },
+  ]);
   await task({
     title: "Migrer la base vers PostgreSQL 18",
     state: "blocked",

@@ -243,7 +243,10 @@ describe("M1 : sécurité du sandbox", () => {
     await s.orchestrator.drainTasks();
     await s.orchestrator.idle();
 
-    const runDir = readdirSync(s.runsDir).map((d) => join(s.runsDir, d))[0]!;
+    // Le dossier de cette exécution, désigné par son identifiant : `drainTasks` peut aussi faire
+    // avancer une tâche d'un test précédent, dont la vérification crée un autre dossier ici.
+    const [run] = await t.db.select({ id: runs.id }).from(runs).where(eq(runs.taskId, task.id));
+    const runDir = join(s.runsDir, run!.id);
     expect(existsSync(join(runDir, "workspace", ".hooks", "post-commit"))).toBe(true);
     expect(existsSync(join(runDir, "PWNED"))).toBe(false);
     expect((await taskState(task.id))?.state).toBe("verifying");

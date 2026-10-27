@@ -73,6 +73,8 @@ export async function runAgent(context: RunContext, env: RunnerEnv): Promise<Run
         totalCostUsd: message.total_cost_usd,
         durationMs: message.duration_ms,
         errors: message.subtype === "success" ? [] : message.errors,
+        // Dernier message de l'agent : c'est le rapport d'un diagnostic DevOps.
+        ...(message.subtype === "success" ? { text: message.result.slice(0, 20_000) } : {}),
       };
     }
   }

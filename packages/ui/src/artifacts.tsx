@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
-import type { Artifact } from "./api.js";
-import { AiBadge, Card, Chip } from "./components.js";
+import type { Artifact, ChangePlan } from "./api.js";
+import { AiBadge, Card, Chip, EnvChip } from "./components.js";
 
 // Artefacts d'une tâche (WORKFLOW.md §6). Ce sont des données écrites par un agent : elles sont
 // affichées comme du texte, champ par champ, jamais interprétées comme du HTML.
@@ -132,6 +132,82 @@ function ReviewView({ review }: { review: Review }) {
   );
 }
 
+type ChangePlanContent = ChangePlan & { approvalRequired: boolean };
+type PlanReport = {
+  outcome: string;
+  reason: string | null;
+  steps: {
+    label: string;
+    phase: string;
+    status: string;
+    exitCode: number | null;
+    durationMs: number | null;
+  }[];
+};
+
+function ChangePlanView({ plan }: { plan: ChangePlanContent }) {
+  const { t } = useTranslation();
+  return (
+    <div className="card-body stack">
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <EnvChip environment={plan.environment} />
+        <Chip>{plan.server}</Chip>
+      </div>
+      <p className="prose">{plan.goal}</p>
+      <p className="muted">
+        {t("plan.impact")} : {plan.impact}
+      </p>
+      <ol className="ink-2" style={{ margin: 0, paddingLeft: 20 }}>
+        {plan.actions.map((a, i) => (
+          <li key={i}>
+            {a.kind === "command" ? (
+              <code>{a.command}</code>
+            ) : (
+              <code>{`${t("plan.playbook")} ${a.name}`}</code>
+            )}
+          </li>
+        ))}
+      </ol>
+      <p className="muted">
+        {t("plan.verify")} : {plan.verify.join(" · ") || "—"}
+      </p>
+      <p className="muted">
+        {t("plan.rollback")} : {plan.rollback.join(" · ") || "—"}
+      </p>
+    </div>
+  );
+}
+
+function PlanReportView({ report }: { report: PlanReport }) {
+  const { t } = useTranslation();
+  return (
+    <div className="card-body stack">
+      <div>
+        <Chip tone={report.outcome === "succeeded" ? "ok" : "crit"}>
+          {t(`status.${report.outcome}`, report.outcome)}
+        </Chip>
+      </div>
+      {report.reason && <p className="prose">{report.reason}</p>}
+      <div className="rows">
+        {report.steps
+          .filter((s) => s.status !== "pending")
+          .map((s, i) => (
+            <div className="gate" key={i}>
+              <span className="id">{s.phase}</span>
+              <code style={{ overflowWrap: "anywhere" }}>{s.label}</code>
+              <span className="ms">
+                {s.durationMs === null ? "" : `${(s.durationMs / 1000).toFixed(1)} s`}
+              </span>
+              <Chip tone={s.status === "done" ? "ok" : s.status === "failed" ? "crit" : "neutral"}>
+                {t(`status.${s.status}`, s.status)}
+              </Chip>
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+}
+
 /** Dernière version de chaque artefact utile, dans l'ordre des phases. */
 export function ArtifactCards({ artifacts }: { artifacts: Artifact[] }) {
   const { t } = useTranslation();
@@ -142,6 +218,9 @@ export function ArtifactCards({ artifacts }: { artifacts: Artifact[] }) {
   const review = latest("review");
   const questions = latest("questions");
   const build = latest("build");
+  const changePlan = latest("change_plan");
+  const planReport = latest("plan_report");
+  const diagnosis = latest("diagnosis");
   const title = (label: string, a: Artifact) => (
     <>
       {label} v{a.version} <AiBadge />
@@ -202,6 +281,25 @@ export function ArtifactCards({ artifacts }: { artifacts: Artifact[] }) {
           <div className="card-body">
             <p className="prose">{(build.content as { summary: string }).summary}</p>
           </div>
+        </Card>
+      )}
+      {diagnosis && (
+        <Card title={title(t("plan.diagnosis"), diagnosis)}>
+          <div className="card-body">
+            <p className="prose" style={{ whiteSpace: "pre-wrap" }}>
+              {(diagnosis.content as { text: string }).text}
+            </p>
+          </div>
+        </Card>
+      )}
+      {changePlan && (
+        <Card title={title(t("plan.title"), changePlan)}>
+          <ChangePlanView plan={changePlan.content as ChangePlanContent} />
+        </Card>
+      )}
+      {planReport && (
+        <Card title={t("plan.report")}>
+          <PlanReportView report={planReport.content as PlanReport} />
         </Card>
       )}
       {review && (

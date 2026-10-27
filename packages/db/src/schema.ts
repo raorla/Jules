@@ -29,6 +29,10 @@ export const orgs = pgTable("orgs", {
   id: uuid("id").primaryKey().defaultRandom(),
   slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
+  /** Option « quatre yeux » (§9) : l'approbateur d'un plan de production n'est pas le demandeur. */
+  fourEyes: boolean("four_eyes").notNull().default(false),
+  /** Approbation de la production depuis GitHub (§12) : désactivée par défaut, faute de passkey. */
+  githubProductionApproval: boolean("github_production_approval").notNull().default(false),
   createdAt: createdAt(),
 });
 
@@ -520,3 +524,190 @@ export const evalRuns = pgTable("eval_runs", {
   result: jsonb("result").notNull(),
   createdAt: createdAt(),
 });
+
+// Agent DevOps (M7, ARCHITECTURE.md §9 et WORKFLOW.md §12).
+
+export const ENVIRONMENTS = ["development", "staging", "production"] as const;
+export const SERVER_LEVELS = ["D0", "D1", "D2", "D3"] as const;
+export const HOST_KEY_STATUSES = [
+  "pending",
+  "awaiting_validation",
+  "trusted",
+  "changed",
+  "unreachable",
+] as const;
+
+/** Serveurs opérés par Jules. La clé privée est dans `secrets` (`ssh_key:<id>`), jamais ici. */
+export const servers = pgTable(
+  "servers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    name: text("name").notNull(),
+    host: text("host").notNull(),
+    port: integer("port").notNull().default(22),
+    username: text("username").notNull(),
+    environment: text("environment", { enum: ENVIRONMENTS }).notNull(),
+    level: text("level", { enum: SERVER_LEVELS }).notNull().default("D0"),
+    /** Repo déployé sur ce serveur, pour lire ses playbooks sur la branche par défaut. */
+    repoId: uuid("repo_id").references(() => repos.id),
+    hostKeyStatus: text("host_key_status", { enum: HOST_KEY_STATUSES })
+      .notNull()
+      .default("pending"),
+    /** Empreinte validée par un admin : la seule acceptée tant qu'elle n'est pas revalidée. */
+    hostKeyFingerprint: text("host_key_fingerprint"),
+    /** Dernière empreinte offerte par le serveur, montrée à l'admin pour validation. */
+    offeredFingerprint: text("offered_fingerprint"),
+    offeredAlgorithm: text("offered_algorithm"),
+    frozen: boolean("frozen").notNull().default(false),
+    /** Verrou par serveur : un seul plan ou playbook à la fois (§9). */
+    lockPlanId: uuid("lock_plan_id"),
+    lockUntil: timestamp("lock_until", { withTimezone: true }),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("servers_org_name_idx").on(t.orgId, t.name)],
+);
+
+export const PLAN_STATUSES = [
+  "pending_approval",
+  "approved",
+  "running",
+  "succeeded",
+  "failed",
+  "rolled_back",
+  "interrupted",
+  "rejected",
+  "expired",
+] as const;
+
+/** Plans de changement (WORKFLOW.md §12.1). `steps` est figé à la soumission : rien d'autre ne s'exécute. */
+export const changePlans = pgTable(
+  "change_plans",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    taskId: uuid("task_id").references(() => tasks.id),
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => servers.id),
+    runId: uuid("run_id").references(() => runs.id),
+    deploymentId: uuid("deployment_id"),
+    plan: jsonb("plan").notNull(),
+    steps: jsonb("steps").notNull(),
+    /** Condensé du plan et de ses étapes : l'exécution refuse un plan modifié après approbation. */
+    planHash: text("plan_hash").notNull(),
+    environment: text("environment", { enum: ENVIRONMENTS }).notNull(),
+    status: text("status", { enum: PLAN_STATUSES }).notNull(),
+    requestedBy: uuid("requested_by").references(() => users.id),
+    approvedBy: uuid("approved_by").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    approvalSource: text("approval_source"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    failureReason: text("failure_reason"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("change_plans_server_status_idx").on(t.serverId, t.status),
+    index("change_plans_task_idx").on(t.taskId),
+  ],
+);
+
+/** Journal des étapes d'un plan : écrit avant et après chaque exécution (§9). */
+export const planSteps = pgTable(
+  "plan_steps",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    planId: uuid("plan_id")
+      .notNull()
+      .references(() => changePlans.id),
+    position: integer("position").notNull(),
+    phase: text("phase", { enum: ["action", "verify", "rollback"] }).notNull(),
+    /** Commande exacte, ou vérification HTTP (`GET <url> → <statut>`). */
+    label: text("label").notNull(),
+    playbook: text("playbook"),
+    status: text("status", { enum: ["pending", "running", "done", "failed", "skipped"] })
+      .notNull()
+      .default("pending"),
+    exitCode: integer("exit_code"),
+    output: text("output"),
+    durationMs: integer("duration_ms"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+  },
+  (t) => [uniqueIndex("plan_steps_plan_position_idx").on(t.planId, t.position)],
+);
+
+/** Historique des commandes envoyées aux serveurs, sorties masquées et tronquées. */
+export const serverCommands = pgTable(
+  "server_commands",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => servers.id),
+    runId: uuid("run_id").references(() => runs.id),
+    planId: uuid("plan_id").references(() => changePlans.id),
+    source: text("source", { enum: ["agent", "plan", "deployment"] }).notNull(),
+    command: text("command").notNull(),
+    commandClass: text("command_class", { enum: ["read", "change", "dangerous"] }).notNull(),
+    decision: text("decision", { enum: ["allow", "deny", "require_approval"] }).notNull(),
+    ruleId: text("rule_id").notNull(),
+    exitCode: integer("exit_code"),
+    timedOut: boolean("timed_out").notNull().default(false),
+    durationMs: integer("duration_ms"),
+    output: text("output"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("server_commands_server_idx").on(t.serverId, t.createdAt)],
+);
+
+export const DEPLOYMENT_STATUSES = [
+  "waiting_ci",
+  "pending_approval",
+  "running",
+  "succeeded",
+  "failed",
+  "rolled_back",
+  "blocked",
+  "cancelled",
+] as const;
+
+/** Déploiements (WORKFLOW.md §12.2), reliés aux PR qu'ils contiennent : exigence → production. */
+export const deployments = pgTable(
+  "deployments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    repoId: uuid("repo_id")
+      .notNull()
+      .references(() => repos.id),
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => servers.id),
+    environment: text("environment", { enum: ENVIRONMENTS }).notNull(),
+    ref: text("ref").notNull(),
+    previousRef: text("previous_ref"),
+    status: text("status", { enum: DEPLOYMENT_STATUSES }).notNull(),
+    playbook: text("playbook").notNull(),
+    planId: uuid("plan_id"),
+    /** Le déploiement de staging qui a précédé celui-ci (production seulement). */
+    promotedFrom: uuid("promoted_from"),
+    githubDeploymentId: bigint("github_deployment_id", { mode: "number" }),
+    pullRequests: jsonb("pull_requests").notNull().default([]),
+    /** Merge de la PR la plus ancienne incluse : début du délai de mise en production (DORA). */
+    mergedAt: timestamp("merged_at", { withTimezone: true }),
+    reason: text("reason"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("deployments_repo_env_idx").on(t.repoId, t.environment, t.createdAt)],
+);

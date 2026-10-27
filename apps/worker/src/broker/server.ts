@@ -1,11 +1,12 @@
 import { chmod, rm } from "node:fs/promises";
-import { and, eq, gt, isNull, runs, sql, tasks, type Db } from "@jules/db";
+import { and, eq, gt, isNull, runs, sql, tasks, toolCalls, type Db } from "@jules/db";
 import type { Role } from "@jules/policy";
 import Fastify from "fastify";
 import type { Logger } from "pino";
 import { isStopped } from "../controls.js";
 import { handleCapability } from "./capabilities.js";
-import type { Masker } from "./masking.js";
+import { truncate, type Masker } from "./masking.js";
+import type { DevopsTools } from "./server-tools.js";
 import { anthropicError, forwardToModel } from "./model-proxy.js";
 import { bearer, hashRunToken } from "./tokens.js";
 import { withSpan } from "../tracing.js";
@@ -22,6 +23,8 @@ export type BrokerDeps = {
   onBudgetExceeded: (runId: string) => void;
   /** Appelé après plusieurs erreurs consécutives du fournisseur : la tâche passera en `waiting_provider`. */
   onProviderOutage?: (runId: string) => void;
+  /** Outils serveur, pour une exécution de l'agent DevOps seulement. */
+  devops?: DevopsTools;
 };
 
 /** Erreurs consécutives du fournisseur au-delà desquelles l'exécution est suspendue (§17). */
@@ -94,6 +97,7 @@ export async function startBroker(
               taskId: auth.task.id,
               role: auth.run.role as Role,
               stopped,
+              ...(deps.devops ? { devops: deps.devops } : {}),
             },
             request.params.name,
             input,
@@ -101,6 +105,16 @@ export async function startBroker(
           ),
         ),
     );
+    if (outcome.after) {
+      // Commande serveur : exécutée après la transaction, sa sortie (masquée) devient la réponse.
+      outcome.text = await outcome.after();
+      if (outcome.callId) {
+        await db
+          .update(toolCalls)
+          .set({ output: truncate(deps.masker.mask(outcome.text), 2_000) })
+          .where(eq(toolCalls.id, outcome.callId));
+      }
+    }
     log.info(
       {
         runId: auth.run.id,

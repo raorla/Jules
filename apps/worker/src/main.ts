@@ -5,6 +5,9 @@ import { OctokitGitHubApp } from "@jules/forge";
 import { SandboxDriver, parseAllowlist } from "@jules/sandbox";
 import { SecretStore, keyringFromEnv } from "@jules/secrets";
 import { Masker } from "./broker/masking.js";
+import { DeploymentService } from "./devops/deployments.js";
+import { PlanService } from "./devops/plans.js";
+import { ServerService } from "./devops/servers.js";
 import { stopAll } from "./emergency.js";
 import { ensureWorkerKey } from "./sealed-secrets.js";
 import { ANTHROPIC_KEY_SECRET, GITHUB_APP_KEY_SECRET, loadWorkerEnv } from "./config.js";
@@ -49,12 +52,31 @@ const driver = new SandboxDriver({
   runtime: env.JULES_SANDBOX_RUNTIME,
   egressImage: env.JULES_EGRESS_IMAGE,
 });
+const masker = new Masker([anthropicKey]);
+// Agent DevOps (M7) : le worker est le seul à se connecter aux serveurs.
+const servers = new ServerService({ db: database.db, secrets: store, masker, log });
+const plans: PlanService = new PlanService({
+  db: database.db,
+  servers,
+  log,
+  // Le service des déploiements est créé juste après : il n'est appelé qu'à la fin d'un plan.
+  onFinished: (tx, plan, outcome) => deployments.onPlanFinished(tx, plan, outcome),
+});
+const deployments: DeploymentService = new DeploymentService({
+  db: database.db,
+  github,
+  plans,
+  servers,
+  log,
+  runsDir: env.JULES_RUNS_DIR,
+});
 const orchestrator = new Orchestrator({
   db: database.db,
   github,
   driver,
   log,
-  masker: new Masker([anthropicKey]),
+  masker,
+  devops: { servers, plans },
   config: {
     runsDir: env.JULES_RUNS_DIR,
     promptsDir:
@@ -85,12 +107,19 @@ const worker = new Worker(
     log,
     settings: { mention: env.JULES_MENTION, label: env.JULES_LABEL, language: env.JULES_LANGUAGE },
     taskBudgetCapUsd: env.JULES_TASK_BUDGET_CAP_USD,
+    plans,
     emergency: {
       stopAll: (actorId) =>
         stopAll(database.db, driver, { orgId: DEFAULT_ORG_ID, reason: "/jules stop-all", actorId }),
     },
   },
-  { databaseUrl: env.DATABASE_URL, orchestrator, runsDir: env.JULES_RUNS_DIR, secrets: store },
+  {
+    databaseUrl: env.DATABASE_URL,
+    orchestrator,
+    runsDir: env.JULES_RUNS_DIR,
+    secrets: store,
+    devops: { servers, plans, deployments },
+  },
 );
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

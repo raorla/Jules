@@ -317,3 +317,53 @@ describe("sorties et reprises", () => {
     });
   });
 });
+
+describe("agent DevOps (WORKFLOW.md §12)", () => {
+  const devops = (state: TaskState, overrides: Partial<TaskContext> = {}) =>
+    ctx(state, { agent: "devops", ...overrides });
+
+  it("commence par le diagnostic, exécuté par le rôle devops", () => {
+    expect(next(devops("received"), { type: "start" }).next).toBe("diagnosing");
+    expect(RUNNABLE_STATES.diagnosing).toBe("devops");
+  });
+
+  it("attend l'approbation humaine quand le niveau l'exige, sinon exécute", () => {
+    const plan = (approvalRequired: boolean) =>
+      next(devops("diagnosing"), { type: "plan_submitted", approvalRequired }).next;
+    expect(plan(true)).toBe("awaiting_plan_approval");
+    expect(plan(false)).toBe("executing");
+    expect(next(devops("awaiting_plan_approval"), { type: "approve" }).next).toBe("executing");
+    expect(next(devops("awaiting_plan_approval"), { type: "revise" }).next).toBe("diagnosing");
+  });
+
+  it("termine sans changement quand le diagnostic suffit", () => {
+    expect(next(devops("diagnosing"), { type: "diagnosis_reported" }).next).toBe("done");
+  });
+
+  it("pose des questions puis reprend le diagnostic", () => {
+    const asked = next(devops("diagnosing"), { type: "questions_asked" });
+    expect(asked).toMatchObject({ next: "awaiting_info", patch: { resumeState: "diagnosing" } });
+  });
+
+  it("ne relance jamais un plan interrompu, échoué ou expiré : on repart du diagnostic", () => {
+    const interrupted = next(devops("executing"), { type: "plan_interrupted" });
+    expect(interrupted).toMatchObject({ next: "blocked", patch: { resumeState: "diagnosing" } });
+    const failed = next(devops("executing"), { type: "plan_failed", reason: "vérification" });
+    expect(failed).toMatchObject({ next: "failed", patch: { resumeState: "diagnosing" } });
+    const expired = next(devops("awaiting_plan_approval"), { type: "plan_expired" });
+    expect(expired).toMatchObject({ next: "blocked", patch: { resumeState: "diagnosing" } });
+    expect(next(devops("blocked", { resumeState: "diagnosing" }), { type: "retry" }).next).toBe(
+      "diagnosing",
+    );
+  });
+
+  it("termine quand le plan est exécuté et vérifié", () => {
+    expect(next(devops("executing"), { type: "plan_completed" }).next).toBe("done");
+  });
+
+  it("refuse les événements hors de propos", () => {
+    expect(transition(devops("executing"), { type: "approve" }).ok).toBe(false);
+    expect(transition(devops("awaiting_plan_approval"), { type: "plan_completed" }).ok).toBe(false);
+    expect(transition(devops("diagnosing"), { type: "build_submitted" }).ok).toBe(false);
+  });
+});

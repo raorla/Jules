@@ -57,6 +57,7 @@ export function sandboxSetup(
   db: Db,
   model: FakeModel,
   overrides: Partial<OrchestratorDeps["config"]> = {},
+  extra: Pick<OrchestratorDeps, "devops"> = {},
 ) {
   const github = new FakeGitHub({ url: "http://127.0.0.1:9", secret: "x" });
   github.setRole("alice", "write");
@@ -76,6 +77,7 @@ export function sandboxSetup(
     driver,
     log,
     masker: new Masker([API_KEY]),
+    ...extra,
     config: {
       runsDir,
       promptsDir: join(ROOT, "prompts"),

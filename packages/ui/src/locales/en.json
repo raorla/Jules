@@ -8,7 +8,10 @@
     "metrics": "Metrics",
     "audit": "Audit log",
     "evals": "Evals",
-    "settings": "Settings"
+    "settings": "Settings",
+    "operations": "Operations",
+    "servers": "Servers",
+    "deployments": "Deployments"
   },
   "top": {
     "search": "Search a task…",
@@ -158,7 +161,10 @@
     "waiting_provider": "waiting for provider",
     "blocked": "blocked",
     "cancelled": "cancelled",
-    "failed": "failed"
+    "failed": "failed",
+    "diagnosing": "diagnosing",
+    "awaiting_plan_approval": "plan to approve",
+    "executing": "running the plan"
   },
   "risk": {
     "low": "low risk",
@@ -199,7 +205,19 @@
     "require_approval": "needs approval",
     "applied": "applied",
     "denied": "denied",
-    "rejected": "rejected"
+    "rejected": "refused",
+    "pending_approval": "to approve",
+    "approved": "approved",
+    "rolled_back": "rolled back",
+    "interrupted": "interrupted",
+    "expired": "expired",
+    "waiting_ci": "waiting for CI",
+    "blocked": "blocked",
+    "done": "done",
+    "skipped": "skipped",
+    "read": "read",
+    "change": "change",
+    "dangerous": "dangerous"
   },
   "artifact": {
     "triage": "Triage",
@@ -213,5 +231,89 @@
     "when": "When",
     "then": "Then",
     "details": "details"
+  },
+  "servers": {
+    "title": "Servers",
+    "register": "Register a server",
+    "name": "Name",
+    "host": "Host",
+    "port": "Port",
+    "user": "User",
+    "environment": "Environment",
+    "repo": "Deployed repo",
+    "none": "none",
+    "key": "SSH private key",
+    "key_help": "Sealed for the worker on receipt: it will never be shown again.",
+    "save": "Register",
+    "saved": "Server registered: Jules is reading its host key.",
+    "host_key": "Host key",
+    "offered": "Offered fingerprint",
+    "validate": "Validate the fingerprint",
+    "validate_help": "Compare it with the output of “ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub” on the server, then copy it here.",
+    "fingerprint": "Fingerprint (SHA256:…)",
+    "level": "Level",
+    "freeze": "Freeze",
+    "unfreeze": "Unfreeze",
+    "frozen": "frozen",
+    "locked": "plan running",
+    "commands": "Command history",
+    "empty": "No servers",
+    "empty_sub": "yet.",
+    "empty_text": "Register a server so the DevOps agent can diagnose it.",
+    "no_commands": "No commands sent."
+  },
+  "host_key": {
+    "pending": "reading",
+    "awaiting_validation": "to validate",
+    "trusted": "validated",
+    "changed": "changed: blocked",
+    "unreachable": "unreachable"
+  },
+  "env": {
+    "development": "development",
+    "staging": "staging",
+    "production": "production"
+  },
+  "plan": {
+    "title": "Change plan",
+    "goal": "Goal",
+    "impact": "Impact",
+    "actions": "Actions",
+    "verify": "Checks",
+    "rollback": "Rollback",
+    "approve": "Approve",
+    "approve_prod": "Approve with my passkey",
+    "reject": "Refuse",
+    "expires": "expires",
+    "sent": "Decision sent: Jules is checking it.",
+    "report": "Plan execution",
+    "diagnosis": "Diagnosis",
+    "empty": "No pending plans.",
+    "playbook": "playbook",
+    "production_note": "Production: approval requires your passkey."
+  },
+  "deployments": {
+    "title": "Deployments",
+    "per_week": "Deployments per week",
+    "lead_time": "Merge → production lead time",
+    "failure_rate": "Change failure rate",
+    "restore": "Time to restore",
+    "approvals_day": "Approvals per day",
+    "hours": "{{value}} h",
+    "empty": "No deployments",
+    "empty_sub": "yet.",
+    "empty_text": "Declare deploy.staging and deploy.production in .jules/config.yml, and a deploy playbook.",
+    "prs": "PRs"
+  },
+  "devops_phase": {
+    "diagnosis": "Diagnosis",
+    "plan": "Plan",
+    "approval": "Approval",
+    "execution": "Execution",
+    "report": "Report"
+  },
+  "notify": {
+    "approval": "An approval is waiting for you.",
+    "enable": "Enable notifications"
   }
 }

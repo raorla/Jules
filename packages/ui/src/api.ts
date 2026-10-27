@@ -25,12 +25,16 @@ export type TaskState =
   | "reviewing"
   | "awaiting_human_review"
   | "learning"
+  | "diagnosing"
+  | "awaiting_plan_approval"
+  | "executing"
   | "done"
   | "waiting_provider"
   | "blocked"
   | "cancelled"
   | "failed";
 export type TaskSummary = {
+  agent?: "developer" | "devops" | "security";
   id: string;
   repo: string;
   title: string;
@@ -116,6 +120,87 @@ export type AuditRow = {
   targetId: string | null;
   data: unknown;
 };
+export type Environment = "development" | "staging" | "production";
+export type Server = {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  environment: Environment;
+  level: "D0" | "D1" | "D2" | "D3";
+  repo: string | null;
+  repoId: string | null;
+  hostKeyStatus: "pending" | "awaiting_validation" | "trusted" | "changed" | "unreachable";
+  hostKeyFingerprint: string | null;
+  offeredFingerprint: string | null;
+  offeredAlgorithm: string | null;
+  frozen: boolean;
+  locked: boolean;
+  createdAt: string;
+};
+export type ServerCommand = {
+  id: string;
+  command: string;
+  commandClass: "read" | "change" | "dangerous";
+  decision: "allow" | "deny" | "require_approval";
+  ruleId: string;
+  exitCode: number | null;
+  timedOut: boolean;
+  durationMs: number | null;
+  output: string | null;
+  source: string;
+  createdAt: string;
+};
+export type PlanAction =
+  | { kind: "command"; command: string; reason: string }
+  | { kind: "playbook"; name: string; params: Record<string, string> };
+export type ChangePlan = {
+  goal: string;
+  server: string;
+  environment: Environment;
+  actions: PlanAction[];
+  impact: string;
+  verify: string[];
+  rollback: string[];
+};
+export type Plan = {
+  id: string;
+  taskId: string | null;
+  deploymentId: string | null;
+  server: string;
+  environment: Environment;
+  status: string;
+  plan: ChangePlan;
+  approvalSource: string | null;
+  failureReason: string | null;
+  expiresAt: string;
+  createdAt: string;
+};
+export type Deployment = {
+  id: string;
+  repo: string;
+  server: string;
+  environment: Environment;
+  ref: string;
+  previousRef: string | null;
+  status: string;
+  playbook: string;
+  planId: string | null;
+  pullRequests: number[];
+  reason: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  endedAt: string | null;
+};
+export type Dora = {
+  days: number;
+  deploymentsPerWeek: number;
+  leadTimeHours: number | null;
+  changeFailureRate: number | null;
+  timeToRestoreHours: number | null;
+  approvalsPerDay: number;
+};
 export type Command =
   | { name: "approve" | "retry" | "cancel" | "pause" | "resume" | "stop_all" }
   | { name: "revise"; feedback: string }
@@ -197,6 +282,9 @@ export function useLiveUpdates(): void {
       void client.invalidateQueries({ queryKey: ["tasks"] });
       void client.invalidateQueries({ queryKey: ["task", id] });
       void client.invalidateQueries({ queryKey: ["approvals"] });
+      void client.invalidateQueries({ queryKey: ["plans"] });
+      void client.invalidateQueries({ queryKey: ["deployments"] });
+      void client.invalidateQueries({ queryKey: ["servers"] });
     };
     source.addEventListener("task", onTask);
     return () => {

@@ -4,9 +4,13 @@ import { addVirtualAuthenticator, lastCommand, loginAs } from "./helpers.js";
 test.describe("parcours principaux", () => {
   test("suivre une tâche puis approuver sa spec depuis le web", async ({ page, request }) => {
     await loginAs(page, request, "root");
-    await expect(page.locator(".kpi.dominant")).toContainText("1");
+    // La spec à valider et le plan DevOps de production.
+    await expect(page.locator(".kpi.dominant")).toContainText("2");
     await page.getByRole("link", { name: /Approbations/ }).click();
-    await page.getByRole("link", { name: /Approuver/ }).click();
+    await page
+      .locator(".ac", { hasText: "Ajouter l'export CSV" })
+      .getByRole("link", { name: /Approuver/ })
+      .click();
     await expect(page.getByRole("heading", { name: /Ajouter l'export CSV/ })).toBeVisible();
     await expect(page.getByRole("cell", { name: "AC1" })).toBeVisible();
     await expect(page.locator('[aria-current="step"]')).toContainText("Spec");
@@ -107,6 +111,112 @@ test.describe("parcours principaux", () => {
   });
 });
 
+test.describe("DevOps (M7)", () => {
+  test("approuver un plan de production exige la passkey, au moment même", async ({
+    page,
+    request,
+  }) => {
+    await addVirtualAuthenticator(page);
+    await loginAs(page, request, "root");
+    await page.getByRole("link", { name: /Approbations/ }).click();
+    const card = page.locator(".ac", { hasText: "web-prod" });
+    await expect(card).toContainText("production");
+    await expect(card).toContainText("sudo -n systemctl restart api");
+    await expect(card).toContainText("Production : l'approbation exige ta passkey.");
+
+    // Sans passkey enregistrée : refusé, l'interface dit quoi faire.
+    await card.getByRole("button", { name: "Approuver avec ma passkey" }).click();
+    await page.getByRole("button", { name: "Utiliser ma passkey" }).click();
+    await expect(page.getByRole("dialog").getByRole("alert")).toHaveText(
+      "Ajoute d'abord une passkey dans les réglages.",
+    );
+    await page.getByRole("dialog").getByRole("button", { name: "Annuler" }).click();
+
+    await page.getByRole("link", { name: "Réglages" }).click();
+    await page.getByRole("button", { name: "Ajouter une passkey" }).click();
+    await page.getByRole("link", { name: /Approbations/ }).click();
+    await page
+      .locator(".ac", { hasText: "web-prod" })
+      .getByRole("button", { name: "Approuver avec ma passkey" })
+      .click();
+    await page.getByRole("button", { name: "Utiliser ma passkey" }).click();
+    await expect(page.locator(".ac", { hasText: "web-prod" }).getByRole("status")).toHaveText(
+      "Décision envoyée : Jules la vérifie.",
+    );
+    expect(await lastCommand(request)).toEqual({
+      name: "approve",
+      source: "web",
+      decision: "pending",
+    });
+  });
+
+  test("un plan hors production s'approuve sans passkey", async ({ page, request }) => {
+    await loginAs(page, request, "root");
+    await page.getByRole("link", { name: /Approbations/ }).click();
+    const card = page.locator(".ac", { hasText: "web-staging" });
+    await expect(card).toContainText("staging");
+    await card.getByRole("button", { name: "Approuver", exact: true }).click();
+    await expect(card.getByRole("status")).toBeVisible();
+    await expect(page.getByRole("dialog")).toBeHidden();
+  });
+
+  test("valider la clé d'hôte d'un serveur demande la passkey et l'empreinte exacte", async ({
+    page,
+    request,
+  }) => {
+    await addVirtualAuthenticator(page);
+    await loginAs(page, request, "root");
+    await page.getByRole("link", { name: "Réglages" }).click();
+    await page.getByRole("button", { name: "Ajouter une passkey" }).click();
+    await page.getByRole("link", { name: "Serveurs" }).click();
+    const prod = page.locator(".row", { hasText: "web-prod" });
+    await expect(prod).toContainText("Clé d'hôte à valider");
+    // Une empreinte qui n'est pas celle offerte par le serveur est refusée, même avec la passkey.
+    await prod.getByLabel("Empreinte (SHA256:…)").fill(`SHA256:${"x".repeat(43)}`);
+    await prod.getByRole("button", { name: "Valider l'empreinte" }).click();
+    await page.getByRole("button", { name: "Utiliser ma passkey" }).click();
+    await expect(page.getByRole("dialog").getByRole("alert")).toContainText("ne correspond pas");
+    await page.getByRole("dialog").getByRole("button", { name: "Annuler" }).click();
+    await prod.getByLabel("Empreinte (SHA256:…)").fill(`SHA256:${"p".repeat(43)}`);
+    await prod.getByRole("button", { name: "Valider l'empreinte" }).click();
+    await expect(page.locator(".row", { hasText: "web-prod" })).toContainText("Clé d'hôte validée");
+  });
+
+  test("les déploiements montrent l'environnement, les PR et les métriques DORA", async ({
+    page,
+    request,
+  }) => {
+    await loginAs(page, request, "root");
+    await page.getByRole("link", { name: "Déploiements" }).click();
+    await expect(page.locator(".kpi.dominant")).toContainText("Déploiements par semaine");
+    const rolledBack = page.locator(".row", { hasText: "77e0b3a" });
+    await expect(rolledBack).toContainText("retour arrière");
+    await expect(rolledBack).toContainText("staging");
+    await expect(rolledBack).toContainText("PR #8");
+  });
+
+  test("l'historique d'un serveur garde les commandes refusées", async ({ page, request }) => {
+    await loginAs(page, request, "root");
+    await page.getByRole("link", { name: "Serveurs" }).click();
+    await page.getByRole("link", { name: "web-staging" }).click();
+    await expect(page.locator(".row", { hasText: "rm -rf /var" })).toContainText("refusé");
+    await expect(page.locator(".row", { hasText: "rm -rf /var" })).toContainText("dangereuse");
+    await expect(page.locator(".row", { hasText: "systemctl status api" })).toContainText("code 0");
+  });
+
+  test("une tâche DevOps montre ses propres phases et son plan", async ({ page, request }) => {
+    await loginAs(page, request, "root");
+    await page
+      .getByRole("link", { name: /Redémarrer l'API en production/ })
+      .first()
+      .click();
+    await expect(page.locator('[aria-current="step"]')).toContainText("Approbation");
+    await expect(
+      page.getByText("environ 5 s d'indisponibilité de l'API", { exact: false }),
+    ).toBeVisible();
+  });
+});
+
 test.describe("sécurité de l'interface", () => {
   test("un artefact qui contient du HTML ou du JavaScript ne l'exécute pas (XSS)", async ({
     page,
@@ -138,7 +248,7 @@ test.describe("sécurité de l'interface", () => {
     request,
   }) => {
     await addVirtualAuthenticator(page);
-    await loginAs(page, request, "root");
+    await loginAs(page, request, "ada");
     await page.getByRole("link", { name: "Réglages" }).click();
     const group = page.getByRole("group", { name: /acme\/factures/ });
 

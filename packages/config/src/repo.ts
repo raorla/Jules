@@ -6,6 +6,8 @@ import { languageSchema } from "./env.js";
 // Elle ne peut que restreindre : baisser l'autonomie ou le budget, ajouter des chemins sensibles.
 
 export const REPO_CONFIG_PATH = ".jules/config.yml";
+/** Playbooks DevOps (ARCHITECTURE.md §9), lus comme la config sur la branche par défaut. */
+export const PLAYBOOKS_PATH = ".jules/playbooks.yml";
 
 const globList = z.array(z.string().min(1).max(300)).max(100);
 

@@ -221,7 +221,7 @@ C'est le seul chemin vers Internet depuis les sandboxes. Il fonctionne avec une 
 | Clé privée de la GitHub App | worker, chiffrée au repos | forge client | gateway, api, sandbox, logs |
 | Jeton d'installation GitHub | mémoire du worker ; durée ≤ 1 h ; portée limitée au repo et aux permissions de l'opération | clone, push, API GitHub | sandbox, `.git/config` du workspace |
 | Clé API Anthropic | worker | proxy modèle du broker | sandbox, api |
-| Clés SSH et accès git des serveurs | worker, chiffrés au repos | exécuteur SSH, via un ssh-agent temporaire | sandbox, api (écriture seule), logs |
+| Clés SSH et accès git des serveurs | worker, chiffrés au repos | exécuteur SSH, en mémoire le temps d'une connexion | sandbox, api (écriture seule), logs |
 | Secret de webhook | gateway | vérification HMAC | worker, sandbox |
 | Secret client OAuth, secret de session | api | connexion web et desktop | worker, sandbox |
 | Jeton du desktop (mode connecté) | trousseau du système | app desktop → api | fichiers en clair sur le disque |
@@ -376,7 +376,7 @@ Un conteneur est créé pour chaque exécution, puis détruit.
 ### Connexions
 
 - **Clé d'hôte** : elle est épinglée à l'enregistrement du serveur, après validation par un admin. Si elle change, toutes les commandes vers ce serveur sont bloquées jusqu'à une nouvelle validation.
-- **Clé privée** : elle est chargée dans un ssh-agent temporaire, le temps d'une commande. Jules n'utilise jamais de mot de passe sudo : uniquement `sudo -n`, qui échoue avec un message clair si le sudo sans mot de passe n'est pas configuré.
+- **Clé privée** : elle est déchiffrée en mémoire du worker le temps d'une connexion (client SSH intégré, `ssh2`), sans fichier ni agent, puis oubliée. La sortie gardée est masquée avec la clé elle-même en plus des secrets connus. Jules n'utilise jamais de mot de passe sudo : la commande s'exécute sans terminal et stdin fermé, donc seul `sudo -n` fonctionne ; il échoue avec un message clair si le sudo sans mot de passe n'est pas configuré.
 - **Utilisateur** : la doc d'installation recommande un utilisateur dédié par serveur, avec un sudo limité aux commandes nécessaires.
 - **Exécution** : chaque commande a un délai maximum côté serveur (`timeout`). Sa sortie est tronquée, masquée, puis conservée.
 

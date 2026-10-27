@@ -212,6 +212,9 @@ importers:
       '@jules/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@jules/devops':
+        specifier: workspace:*
+        version: link:../../packages/devops
       '@jules/forge':
         specifier: workspace:*
         version: link:../../packages/forge
@@ -233,6 +236,9 @@ importers:
       '@jules/secrets':
         specifier: workspace:*
         version: link:../../packages/secrets
+      '@jules/ssh':
+        specifier: workspace:*
+        version: link:../../packages/ssh
       '@jules/workflow':
         specifier: workspace:*
         version: link:../../packages/workflow
@@ -313,6 +319,9 @@ importers:
 
   packages/artifacts:
     dependencies:
+      '@jules/devops':
+        specifier: workspace:*
+        version: link:../devops
       zod:
         specifier: 4.6.7
         version: 4.6.7
@@ -408,6 +417,31 @@ importers:
       drizzle-kit:
         specifier: 0.31.11
         version: 0.31.11
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 5.0.5
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(@vitest/coverage-v8@5.0.5)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/devops:
+    dependencies:
+      '@jules/policy':
+        specifier: workspace:*
+        version: link:../policy
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      '@vitest/coverage-v8':
+        specifier: 5.0.5
+        version: 5.0.5(vitest@5.0.5)
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -556,6 +590,28 @@ importers:
       '@types/node':
         specifier: 24.19.2
         version: 24.19.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 5.0.5
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(@vitest/coverage-v8@5.0.5)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/ssh:
+    dependencies:
+      ssh2:
+        specifier: 1.17.0
+        version: 1.17.0
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      '@types/ssh2':
+        specifier: 1.15.6
+        version: 1.15.6
+      testcontainers:
+        specifier: 12.2.1
+        version: 12.2.1
       typescript:
         specifier: 6.0.3
         version: 6.0.3

@@ -3,11 +3,13 @@ import { authorize, commandSchema, effectiveRole } from "@jules/commands";
 import {
   and,
   approvals,
+  changePlans,
   eq,
   installations,
   lessons,
   memberships,
   repos,
+  servers,
   sql,
   tasks,
   users,
@@ -111,6 +113,11 @@ async function applyWebCommand(deps: WorkerDeps, row: CommandRow): Promise<void>
     return;
   }
 
+  const planId = (row.args as { planId?: unknown }).planId;
+  if (!row.taskId && typeof planId === "string") {
+    await applyPlanDecision(deps, row, author, planId);
+    return;
+  }
   const [found] = row.taskId
     ? await db
         .select({ task: tasks, repo: repos, installation: installations })
@@ -166,7 +173,19 @@ async function applyWebCommand(deps: WorkerDeps, row: CommandRow): Promise<void>
     if (!task) {
       return { ok: false as const, reason: "tâche introuvable" };
     }
-    const result = await applyCommand(tx, deps, task, cmd, { type: "user", id: author.id });
+    const result = await applyCommand(
+      tx,
+      deps,
+      task,
+      cmd,
+      { type: "user", id: author.id },
+      {
+        source: row.source,
+        role: effective,
+        // Posé par l'api seulement après une passkey présentée au moment de la commande.
+        stepUp: (row.args as { stepUp?: unknown }).stepUp === true && row.source !== "github",
+      },
+    );
     if (result.ok && result.approval) {
       await tx.insert(approvals).values({
         ...result.approval,
@@ -179,4 +198,58 @@ async function applyWebCommand(deps: WorkerDeps, row: CommandRow): Promise<void>
     return result;
   });
   await finish(db, row, outcome.ok ? "applied" : "rejected", outcome.reason);
+}
+
+/**
+ * Décision sur un plan sans tâche (déploiement) : les droits sont revérifiés sur le repo du serveur,
+ * puis la policy tranche (production, passkey, quatre yeux), comme pour un plan de tâche.
+ */
+async function applyPlanDecision(
+  deps: WorkerDeps,
+  row: CommandRow,
+  author: { id: string; login: string; role: "admin" | "maintainer" | "member" | "viewer" },
+  planId: string,
+): Promise<void> {
+  const { db } = deps;
+  if (!deps.plans) {
+    await finish(db, row, "rejected", "plans indisponibles");
+    return;
+  }
+  const [found] = await db
+    .select({ plan: changePlans, repo: repos, installation: installations })
+    .from(changePlans)
+    .innerJoin(servers, eq(servers.id, changePlans.serverId))
+    .innerJoin(repos, eq(repos.id, servers.repoId))
+    .innerJoin(installations, eq(installations.id, repos.installationId))
+    .where(eq(changePlans.id, planId));
+  if (!found) {
+    await finish(db, row, "rejected", "plan introuvable ou serveur sans repo");
+    return;
+  }
+  const [owner, name] = found.repo.fullName.split("/") as [string, string];
+  const github = await deps.github.getRepoRole(
+    { installationId: found.installation.githubInstallationId, owner, repo: name },
+    author.login,
+  );
+  const effective = effectiveRole(author.role, github);
+  const roles = { admin: "admin", maintain: "maintainer", write: "member" } as const;
+  const role = Object.hasOwn(roles, effective) ? roles[effective as keyof typeof roles] : "viewer";
+  const plans = deps.plans;
+  const result = await db.transaction(async (tx) => {
+    const [plan] = await tx
+      .select()
+      .from(changePlans)
+      .where(eq(changePlans.id, planId))
+      .for("update");
+    if (!plan) {
+      return { ok: false, reason: "plan introuvable" };
+    }
+    return plans.decideOn(tx, plan, row.name === "approve" ? "approve" : "reject", {
+      userId: author.id,
+      role,
+      source: row.source,
+      stepUp: (row.args as { stepUp?: unknown }).stepUp === true && row.source !== "github",
+    });
+  });
+  await finish(db, row, result.ok ? "applied" : "denied", result.reason);
 }

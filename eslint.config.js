@@ -34,7 +34,11 @@ export default tseslint.config(
   },
   {
     files: ["**/test/**/*.ts", "**/*.test.ts", "**/e2e/**/*.ts"],
-    rules: { "@typescript-eslint/no-non-null-assertion": "off" },
+    rules: {
+      "@typescript-eslint/no-non-null-assertion": "off",
+      // Les matchers asymétriques de Vitest (`expect.stringContaining`) sont typés `any`.
+      "@typescript-eslint/no-unsafe-assignment": "off",
+    },
   },
   {
     files: ["**/*.js"],

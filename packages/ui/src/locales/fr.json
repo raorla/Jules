@@ -8,7 +8,10 @@
     "metrics": "Métriques",
     "audit": "Journal d'audit",
     "evals": "Evals",
-    "settings": "Réglages"
+    "settings": "Réglages",
+    "operations": "Opérations",
+    "servers": "Serveurs",
+    "deployments": "Déploiements"
   },
   "top": {
     "search": "Rechercher une tâche…",
@@ -158,7 +161,10 @@
     "waiting_provider": "attend le fournisseur",
     "blocked": "bloquée",
     "cancelled": "annulée",
-    "failed": "en échec"
+    "failed": "en échec",
+    "diagnosing": "diagnostic",
+    "awaiting_plan_approval": "plan à approuver",
+    "executing": "exécution du plan"
   },
   "risk": {
     "low": "risque faible",
@@ -180,9 +186,9 @@
     "pending": "en attente",
     "starting": "démarrage",
     "running": "en cours",
-    "succeeded": "réussie",
+    "succeeded": "réussi",
     "failed": "échouée",
-    "cancelled": "annulée",
+    "cancelled": "annulé",
     "killed": "arrêtée",
     "approve": "approuvée",
     "request_changes": "changements demandés",
@@ -199,7 +205,19 @@
     "require_approval": "à approuver",
     "applied": "appliquée",
     "denied": "refusée",
-    "rejected": "rejetée"
+    "rejected": "refusé",
+    "pending_approval": "à approuver",
+    "approved": "approuvé",
+    "rolled_back": "retour arrière",
+    "interrupted": "interrompu",
+    "expired": "expiré",
+    "waiting_ci": "attend la CI",
+    "blocked": "bloqué",
+    "done": "faite",
+    "skipped": "ignorée",
+    "read": "lecture",
+    "change": "changement",
+    "dangerous": "dangereuse"
   },
   "artifact": {
     "triage": "Triage",
@@ -213,5 +231,89 @@
     "when": "Quand",
     "then": "Alors",
     "details": "détail"
+  },
+  "servers": {
+    "title": "Serveurs",
+    "register": "Enregistrer un serveur",
+    "name": "Nom",
+    "host": "Hôte",
+    "port": "Port",
+    "user": "Utilisateur",
+    "environment": "Environnement",
+    "repo": "Repo déployé",
+    "none": "aucun",
+    "key": "Clé privée SSH",
+    "key_help": "Scellée pour le worker dès réception : elle ne sera plus jamais affichée.",
+    "save": "Enregistrer",
+    "saved": "Serveur enregistré : Jules lit sa clé d'hôte.",
+    "host_key": "Clé d'hôte",
+    "offered": "Empreinte offerte",
+    "validate": "Valider l'empreinte",
+    "validate_help": "Compare-la à la sortie de « ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub » sur le serveur, puis recopie-la.",
+    "fingerprint": "Empreinte (SHA256:…)",
+    "level": "Niveau",
+    "freeze": "Geler",
+    "unfreeze": "Dégeler",
+    "frozen": "gelé",
+    "locked": "plan en cours",
+    "commands": "Historique des commandes",
+    "empty": "Aucun serveur.",
+    "empty_sub": "pour l'instant.",
+    "empty_text": "Enregistre un serveur pour que l'agent DevOps puisse le diagnostiquer.",
+    "no_commands": "Aucune commande envoyée."
+  },
+  "host_key": {
+    "pending": "lecture en cours",
+    "awaiting_validation": "à valider",
+    "trusted": "validée",
+    "changed": "changée : bloqué",
+    "unreachable": "injoignable"
+  },
+  "env": {
+    "development": "development",
+    "staging": "staging",
+    "production": "production"
+  },
+  "plan": {
+    "title": "Plan de changement",
+    "goal": "But",
+    "impact": "Impact",
+    "actions": "Actions",
+    "verify": "Vérifications",
+    "rollback": "Retour arrière",
+    "approve": "Approuver",
+    "approve_prod": "Approuver avec ma passkey",
+    "reject": "Refuser",
+    "expires": "expire",
+    "sent": "Décision envoyée : Jules la vérifie.",
+    "report": "Exécution du plan",
+    "diagnosis": "Diagnostic",
+    "empty": "Aucun plan en attente.",
+    "playbook": "playbook",
+    "production_note": "Production : l'approbation exige ta passkey."
+  },
+  "deployments": {
+    "title": "Déploiements",
+    "per_week": "Déploiements par semaine",
+    "lead_time": "Délai merge → production",
+    "failure_rate": "Taux d'échec",
+    "restore": "Temps de rétablissement",
+    "approvals_day": "Approbations par jour",
+    "hours": "{{value}} h",
+    "empty": "Aucun déploiement.",
+    "empty_sub": "pour l'instant.",
+    "empty_text": "Déclare deploy.staging et deploy.production dans .jules/config.yml, et un playbook deploy.",
+    "prs": "PR"
+  },
+  "devops_phase": {
+    "diagnosis": "Diagnostic",
+    "plan": "Plan",
+    "approval": "Approbation",
+    "execution": "Exécution",
+    "report": "Rapport"
+  },
+  "notify": {
+    "approval": "Une approbation t'attend.",
+    "enable": "Activer les notifications"
   }
 }

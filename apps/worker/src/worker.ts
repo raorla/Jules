@@ -5,6 +5,9 @@ import pg from "pg";
 import type { WorkerDeps } from "./deps.js";
 import { drainEvents } from "./inbox.js";
 import { drainOutbox } from "./outbox.js";
+import type { DeploymentService } from "./devops/deployments.js";
+import type { PlanService } from "./devops/plans.js";
+import type { ServerService } from "./devops/servers.js";
 import type { Orchestrator } from "./orchestrator.js";
 import { purgeExpired } from "./retention.js";
 import { drainSecretSubmissions } from "./sealed-secrets.js";
@@ -22,6 +25,8 @@ export type WorkerOptions = {
   runsDir?: string;
   /** Coffre des secrets : le worker y importe ceux saisis dans l'interface (scellés pour lui). */
   secrets?: SecretStore;
+  /** Agent DevOps (M7) : clés d'hôte, plans approuvés, pipeline de déploiement. */
+  devops?: { servers: ServerService; plans: PlanService; deployments: DeploymentService };
   pollMs?: number;
   reconcileEveryMs?: number;
   reconcileLookbackMs?: number;
@@ -34,12 +39,15 @@ export class AppSetupError extends Error {
   }
 }
 
-type LoopName = "events" | "outbox" | "tasks" | "commands";
+type LoopName = "events" | "outbox" | "tasks" | "commands" | "devops";
 type Loop = { running: boolean; again: boolean; run: () => Promise<number> };
 
 export class Worker {
   readonly #deps: WorkerDeps;
-  readonly #options: Required<Omit<WorkerOptions, "orchestrator" | "runsDir" | "secrets">>;
+  readonly #options: Required<
+    Omit<WorkerOptions, "orchestrator" | "runsDir" | "secrets" | "devops">
+  >;
+  readonly #devops: WorkerOptions["devops"];
   readonly #runsDir: string | undefined;
   readonly #orchestrator: Orchestrator | undefined;
   readonly #loops: Record<LoopName, Loop>;
@@ -49,8 +57,9 @@ export class Worker {
 
   constructor(deps: WorkerDeps, options: WorkerOptions) {
     this.#deps = deps;
-    const { orchestrator, runsDir, secrets, ...rest } = options;
+    const { orchestrator, runsDir, secrets, devops, ...rest } = options;
     this.#runsDir = runsDir;
+    this.#devops = devops;
     this.#options = {
       pollMs: 5_000,
       reconcileEveryMs: 10 * 60_000,
@@ -73,6 +82,17 @@ export class Worker {
           (await drainWebCommands(deps)) +
           (secrets ? await drainSecretSubmissions(deps.db, secrets) : 0),
       },
+      devops: {
+        running: false,
+        again: false,
+        run: async () =>
+          devops
+            ? (await devops.servers.probePending()) +
+              (await devops.plans.expire()) +
+              (await devops.deployments.advance()) +
+              (await devops.plans.drain())
+            : 0,
+      },
     };
   }
 
@@ -83,16 +103,23 @@ export class Worker {
     await this.reconcile(GITHUB_DELIVERY_RETENTION_MS);
     // Reprise après crash : exécutions orphelines arrêtées, tâches au bail expiré relancées.
     await this.#recover();
+    // Un plan resté `running` est déclaré interrompu, une seule fois au démarrage : jamais relancé.
+    const interrupted = (await this.#devops?.plans.recover()) ?? 0;
+    if (interrupted > 0) {
+      this.#deps.log.warn({ interrupted }, "plans interrompus par l'arrêt du worker");
+    }
     this.#kick("events");
     this.#kick("outbox");
     this.#kick("tasks");
     this.#kick("commands");
+    this.#kick("devops");
     this.#timers.push(
       setInterval(() => {
         this.#kick("events");
         this.#kick("outbox");
         this.#kick("tasks");
         this.#kick("commands");
+        this.#kick("devops");
       }, this.#options.pollMs),
       setInterval(() => void this.#recover(), 60_000),
       setInterval(() => void this.#purge(), 3600_000),

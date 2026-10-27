@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
   DEFAULT_ORG_ID,
+  changePlans,
   commands,
   eq,
   installations,
@@ -9,6 +10,7 @@ import {
   repos,
   runs,
   secretSubmissions,
+  servers,
   stops,
   tasks,
   toolCalls,
@@ -404,5 +406,143 @@ describe("arrêt d'urgence", () => {
     expect(active.length).toBeGreaterThan(0);
     const pending = await t.db.select().from(commands).where(eq(commands.name, "stop_all"));
     expect(pending.at(-1)).toMatchObject({ decision: "pending" });
+  });
+});
+
+describe("DevOps (M7)", () => {
+  const PRIVATE_KEY = `-----BEGIN OPENSSH PRIVATE KEY-----\n${"b".repeat(200)}\n-----END OPENSSH PRIVATE KEY-----\n`;
+
+  it("enregistre un serveur avec passkey : la clé est scellée pour le worker et jamais renvoyée", async () => {
+    await addMember("ops-admin", "admin");
+    const admin = (await login("ops-admin"))!;
+    const body = {
+      name: "web-1",
+      host: "10.0.0.5",
+      port: 22,
+      username: "jules",
+      environment: "staging",
+      privateKey: PRIVATE_KEY,
+    };
+    const refused = await call(admin, "POST", "/v1/servers", body);
+    expect(refused.statusCode).toBe(403);
+    expect(refused.json()).toMatchObject({ stepUp: true });
+    const authenticator = new SoftAuthenticator("jules.test", PUBLIC_URL);
+    await registerPasskey(admin, authenticator);
+    await stepUp(admin, authenticator);
+    const created = await call(admin, "POST", "/v1/servers", body);
+    expect(created.statusCode).toBe(201);
+    const server = created.json<{ id: string; hostKeyStatus: string }>();
+    expect(server.hostKeyStatus).toBe("pending");
+    expect(created.body).not.toContain("PRIVATE KEY");
+    const [submission] = await t.db
+      .select()
+      .from(secretSubmissions)
+      .where(eq(secretSubmissions.name, `ssh_key_${server.id.replaceAll("-", "")}`));
+    expect(submission?.sealed).not.toContain("PRIVATE KEY");
+    expect(JSON.stringify((await call(admin, "GET", "/v1/servers")).json())).not.toContain(
+      "PRIVATE KEY",
+    );
+    expect((await call(admin, "POST", "/v1/servers", body)).statusCode).toBe(409);
+
+    // La clé d'hôte : seule l'empreinte offerte par le serveur peut être validée.
+    await t.db
+      .update(servers)
+      .set({ hostKeyStatus: "awaiting_validation", offeredFingerprint: `SHA256:${"A".repeat(43)}` })
+      .where(eq(servers.id, server.id));
+    const wrong = await call(admin, "POST", `/v1/servers/${server.id}/trust`, {
+      fingerprint: `SHA256:${"B".repeat(43)}`,
+    });
+    expect(wrong.statusCode).toBe(409);
+    const trusted = await call(admin, "POST", `/v1/servers/${server.id}/trust`, {
+      fingerprint: `SHA256:${"A".repeat(43)}`,
+    });
+    expect(trusted.statusCode).toBe(200);
+    const [row] = await t.db.select().from(servers).where(eq(servers.id, server.id));
+    expect(row).toMatchObject({
+      hostKeyStatus: "trusted",
+      hostKeyFingerprint: `SHA256:${"A".repeat(43)}`,
+    });
+  });
+
+  it("exige une passkey pour approuver un plan de production, pas pour la staging", async () => {
+    await addMember("ops-maint", "maintainer");
+    const maintainer = (await login("ops-maint"))!;
+    const { repo } = await seedRepoAndTask();
+    const plan = async (environment: "staging" | "production") => {
+      const [server] = await t.db
+        .insert(servers)
+        .values({
+          orgId: DEFAULT_ORG_ID,
+          name: `srv-${crypto.randomUUID().slice(0, 6)}`,
+          host: "h",
+          username: "jules",
+          environment,
+          repoId: repo.id,
+        })
+        .returning();
+      const [row] = await t.db
+        .insert(changePlans)
+        .values({
+          orgId: DEFAULT_ORG_ID,
+          serverId: server!.id,
+          plan: {},
+          steps: [],
+          planHash: "x",
+          environment,
+          status: "pending_approval",
+          expiresAt: new Date(Date.now() + 600_000),
+        })
+        .returning();
+      return row!;
+    };
+    const staging = await plan("staging");
+    const accepted = await call(maintainer, "POST", `/v1/plans/${staging.id}/decision`, {
+      decision: "approve",
+    });
+    expect(accepted.statusCode).toBe(202);
+    const [command] = await t.db
+      .select()
+      .from(commands)
+      .where(eq(commands.id, accepted.json<{ commandId: string }>().commandId));
+    expect(command).toMatchObject({
+      name: "approve",
+      decision: "pending",
+      args: { planId: staging.id, stepUp: false },
+    });
+
+    const production = await plan("production");
+    const refused = await call(maintainer, "POST", `/v1/plans/${production.id}/decision`, {
+      decision: "approve",
+    });
+    expect(refused.statusCode).toBe(403);
+    expect(refused.json()).toMatchObject({ stepUp: true });
+    // Refuser un plan n'est pas une action sensible.
+    expect(
+      (
+        await call(maintainer, "POST", `/v1/plans/${production.id}/decision`, {
+          decision: "reject",
+        })
+      ).statusCode,
+    ).toBe(202);
+    const pending = (await call(maintainer, "GET", "/v1/plans?status=pending_approval")).json<
+      { id: string }[]
+    >();
+    expect(pending.map((p) => p.id)).toEqual(expect.arrayContaining([staging.id, production.id]));
+  });
+
+  it("protège les réglages d'approbation de la production par une passkey", async () => {
+    const admin = (await login("ops-admin"))!;
+    const refused = await call(admin, "PATCH", "/v1/settings/org", {
+      githubProductionApproval: true,
+    });
+    expect(refused.json()).toMatchObject({ stepUp: true });
+    expect((await call(admin, "GET", "/v1/settings/org")).json()).toEqual({
+      fourEyes: false,
+      githubProductionApproval: false,
+    });
+    expect((await call(admin, "GET", "/v1/dora?days=30")).json()).toMatchObject({
+      days: 30,
+      deploymentsPerWeek: 0,
+    });
   });
 });

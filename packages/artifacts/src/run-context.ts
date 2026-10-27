@@ -41,5 +41,6 @@ export const runResultSchema = z.object({
   totalCostUsd: z.number(),
   durationMs: z.number(),
   errors: z.array(z.string()),
+  text: z.string().max(20_000).optional(),
 });
 export type RunResult = z.infer<typeof runResultSchema>;

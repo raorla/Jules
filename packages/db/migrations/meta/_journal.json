@@ -64,6 +64,13 @@
       "when": 1793098810329,
       "tag": "0008_m6_notify",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793102562593,
+      "tag": "0009_m7_devops",
+      "breakpoints": true
     }
   ]
 }

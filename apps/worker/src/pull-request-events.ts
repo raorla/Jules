@@ -5,6 +5,7 @@ import type { RepoRef } from "@jules/forge";
 import { z } from "zod";
 import { activeTask, storeHumanInput, type Apply } from "./conversation.js";
 import type { WorkerDeps } from "./deps.js";
+import { requestDeployment } from "./devops/deployments.js";
 import { upsertUser } from "./identities.js";
 import { applyTransition } from "./transitions.js";
 
@@ -22,6 +23,7 @@ const base = z.object({
     id: z.number(),
     name: z.string(),
     owner: z.object({ login: z.string() }),
+    default_branch: z.string().optional(),
   }),
   sender: account,
 });
@@ -39,6 +41,8 @@ const closedPayload = base.extend({
     number: z.number(),
     merged: z.boolean().nullable().optional(),
     merged_at: z.string().nullable().optional(),
+    merge_commit_sha: z.string().nullable().optional(),
+    base: z.object({ ref: z.string() }).optional(),
   }),
 });
 
@@ -128,9 +132,26 @@ export function preparePullRequestClosed(event: EventRow): Apply {
   }
   const merged = p.pull_request.merged === true || Boolean(p.pull_request.merged_at);
   return async (tx: Tx) => {
+    // Un merge sur la branche par défaut peut lancer le pipeline de déploiement (WORKFLOW.md §12.2).
+    const sha = p.pull_request.merge_commit_sha;
+    const onDefault =
+      p.pull_request.base === undefined ||
+      p.repository.default_branch === undefined ||
+      p.pull_request.base.ref === p.repository.default_branch;
+    const deploying =
+      merged && sha && onDefault
+        ? await requestDeployment(tx, {
+            githubRepoId: p.repository.id,
+            sha,
+            prNumber: p.pull_request.number,
+            mergedAt: p.pull_request.merged_at ? new Date(p.pull_request.merged_at) : new Date(),
+          })
+        : false;
     const task = await activeTask(tx, p.repository.id, p.pull_request.number, true);
     if (!task) {
-      return { status: "ignored", reason: "no_task_for_pull_request" };
+      return deploying
+        ? { status: "processed", reason: "deployment_requested" }
+        : { status: "ignored", reason: "no_task_for_pull_request" };
     }
     await tx
       .insert(artifacts)

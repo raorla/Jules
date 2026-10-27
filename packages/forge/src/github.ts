@@ -78,7 +78,23 @@ export interface GitHubApp {
   listCheckRuns(ref: RepoRef, sha: string): Promise<CheckRun[]>;
   /** Crée ou met à jour le check run `name` de ce commit. */
   upsertCheckRun(ref: RepoRef, run: CheckRunInput): Promise<{ id: number }>;
+  /** Déploiement GitHub d'un commit (API Deployments, WORKFLOW.md §12.2). */
+  createDeployment(ref: RepoRef, deployment: NewDeployment): Promise<{ id: number }>;
+  createDeploymentStatus(ref: RepoRef, id: number, status: DeploymentStatusInput): Promise<void>;
 }
+
+export type NewDeployment = {
+  sha: string;
+  environment: string;
+  description: string;
+  productionEnvironment: boolean;
+};
+
+export type DeploymentStatusInput = {
+  state: "queued" | "in_progress" | "success" | "failure" | "error" | "inactive";
+  description: string;
+  logUrl?: string;
+};
 
 export type NewReview = {
   commitId: string;
@@ -211,6 +227,41 @@ export class OctokitGitHubApp implements GitHubApp {
       ...body,
     });
     return { id: data.id };
+  }
+
+  async createDeployment(ref: RepoRef, deployment: NewDeployment): Promise<{ id: number }> {
+    const octokit = await this.#installation(ref, { deployments: "write" });
+    const { data } = await octokit.rest.repos.createDeployment({
+      owner: ref.owner,
+      repo: ref.repo,
+      ref: deployment.sha,
+      environment: deployment.environment,
+      description: deployment.description.slice(0, 140),
+      production_environment: deployment.productionEnvironment,
+      // La CI est déjà vérifiée par Jules ; sans cela GitHub exigerait des statuts de commit.
+      required_contexts: [],
+      auto_merge: false,
+    });
+    if (!("id" in data)) {
+      throw new Error(`déploiement refusé par GitHub : ${data.message ?? "raison inconnue"}`);
+    }
+    return { id: data.id };
+  }
+
+  async createDeploymentStatus(
+    ref: RepoRef,
+    id: number,
+    status: DeploymentStatusInput,
+  ): Promise<void> {
+    const octokit = await this.#installation(ref, { deployments: "write" });
+    await octokit.rest.repos.createDeploymentStatus({
+      owner: ref.owner,
+      repo: ref.repo,
+      deployment_id: id,
+      state: status.state,
+      description: status.description.slice(0, 140),
+      ...(status.logUrl ? { log_url: status.logUrl } : {}),
+    });
   }
 
   async createPullRequest(ref: RepoRef, pr: NewPullRequest): Promise<PullRequest> {

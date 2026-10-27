@@ -10,6 +10,8 @@ const SCREENS = [
   { name: "task", path: "task:Corriger l'arrondi de la TVA", ready: "Gates" },
   { name: "approvals", path: "/approvals", ready: "Ajouter l'export CSV des factures" },
   { name: "settings", path: "/settings", ready: "Passkeys" },
+  { name: "servers", path: "/servers", ready: "web-staging" },
+  { name: "deployments", path: "/deployments", ready: "Déploiements par semaine" },
 ] as const;
 
 for (const colorScheme of ["dark", "light"] as const) {

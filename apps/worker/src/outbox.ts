@@ -3,6 +3,7 @@ import {
   and,
   artifacts,
   asc,
+  deployments,
   desc,
   eq,
   installations,
@@ -75,6 +76,12 @@ const effectPayloads = {
     conclusion: z.enum(["success", "failure", "neutral", "action_required"]),
     title: z.string(),
     summary: z.string(),
+  }),
+  "github.deployment": z.object({ deploymentId: z.uuid() }),
+  "github.deployment_status": z.object({
+    deploymentId: z.uuid(),
+    state: z.enum(["queued", "in_progress", "success", "failure", "error"]),
+    description: z.string().max(140),
   }),
   "github.reply": z.object({
     installationId: z.number(),
@@ -173,6 +180,25 @@ async function loadTask(db: Db, taskId: string) {
   return { ...found, ref, issueNumber: found.task.issueNumber };
 }
 
+async function loadDeployment(db: Db, deploymentId: string) {
+  const [found] = await db
+    .select({ deployment: deployments, repo: repos, installation: installations })
+    .from(deployments)
+    .innerJoin(repos, eq(repos.id, deployments.repoId))
+    .innerJoin(installations, eq(installations.id, repos.installationId))
+    .where(eq(deployments.id, deploymentId));
+  if (!found) {
+    throw new Error(`déploiement ${deploymentId} introuvable`);
+  }
+  const [owner, name] = found.repo.fullName.split("/") as [string, string];
+  const ref: RepoRef = {
+    installationId: found.installation.githubInstallationId,
+    owner,
+    repo: name,
+  };
+  return { deployment: found.deployment, ref };
+}
+
 async function latestArtifact(db: Db, taskId: string, kind: string) {
   const [row] = await db
     .select()
@@ -194,6 +220,18 @@ const executors: Record<EffectKind, Executor> = {
       { splitProposal?: { title: string; summary: string }[] } | undefined;
     const spec = (await latestArtifact(db, taskId, "spec")) as StatusView["spec"];
     const design = (await latestArtifact(db, taskId, "design")) as StatusView["design"];
+    const changePlan = (await latestArtifact(
+      db,
+      taskId,
+      "change_plan",
+    )) as StatusView["changePlan"];
+    const planReport = (await latestArtifact(
+      db,
+      taskId,
+      "plan_report",
+    )) as StatusView["planReport"];
+    const diagnosis = (await latestArtifact(db, taskId, "diagnosis")) as
+      { text: string } | undefined;
     const updates = await db
       .select({ input: toolCalls.input })
       .from(toolCalls)
@@ -215,6 +253,9 @@ const executors: Record<EffectKind, Executor> = {
         ...(triage?.splitProposal ? { split: triage.splitProposal } : {}),
         ...(spec ? { spec } : {}),
         ...(design ? { design } : {}),
+        ...(changePlan ? { changePlan } : {}),
+        ...(planReport ? { planReport } : {}),
+        ...(diagnosis ? { diagnosis: diagnosis.text } : {}),
         updates: updates
           .map((u) => (u.input as { message?: string }).message ?? "")
           .filter(Boolean),
@@ -269,6 +310,39 @@ const executors: Record<EffectKind, Executor> = {
       summary: p.summary,
     });
     return { checkRunId: run.id };
+  },
+
+  "github.deployment": async ({ db, github }, row) => {
+    const { deploymentId } = effectPayloads["github.deployment"].parse(row.payload);
+    const { deployment, ref } = await loadDeployment(db, deploymentId);
+    // Déjà créé (effet rejoué après un crash) : rien à refaire.
+    if (deployment.githubDeploymentId !== null) {
+      return { githubDeploymentId: deployment.githubDeploymentId, operation: "existing" };
+    }
+    const created = await github.createDeployment(ref, {
+      sha: deployment.ref,
+      environment: deployment.environment,
+      description: `Jules : ${deployment.playbook} (${deployment.ref.slice(0, 7)})`,
+      productionEnvironment: deployment.environment === "production",
+    });
+    await db
+      .update(deployments)
+      .set({ githubDeploymentId: created.id })
+      .where(eq(deployments.id, deployment.id));
+    return { githubDeploymentId: created.id, operation: "created" };
+  },
+
+  "github.deployment_status": async ({ db, github }, row) => {
+    const p = effectPayloads["github.deployment_status"].parse(row.payload);
+    const { deployment, ref } = await loadDeployment(db, p.deploymentId);
+    if (deployment.githubDeploymentId === null) {
+      throw new Error("déploiement GitHub pas encore créé");
+    }
+    await github.createDeploymentStatus(ref, deployment.githubDeploymentId, {
+      state: p.state,
+      description: p.description,
+    });
+    return { state: p.state };
   },
 
   "github.reply": async ({ github }, row) => {

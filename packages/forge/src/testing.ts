@@ -9,6 +9,8 @@ import type {
   PullRequest,
   RepoRef,
   RepoRole,
+  DeploymentStatusInput,
+  NewDeployment,
 } from "./github.js";
 import { signWebhook } from "./webhooks.js";
 
@@ -209,6 +211,29 @@ export class FakeGitHub implements GitHubApp {
     };
     runs.splice(existing ? runs.indexOf(existing) : runs.length, existing ? 1 : 0, value);
     return Promise.resolve({ id: value.id });
+  }
+
+  readonly deployments: (NewDeployment & {
+    id: number;
+    repo: string;
+    statuses: DeploymentStatusInput[];
+  })[] = [];
+
+  createDeployment(ref: RepoRef, deployment: NewDeployment): Promise<{ id: number }> {
+    this.#maybeFail("createDeployment");
+    const id = this.#nextId++;
+    this.deployments.push({ ...deployment, id, repo: `${ref.owner}/${ref.repo}`, statuses: [] });
+    return Promise.resolve({ id });
+  }
+
+  createDeploymentStatus(_ref: RepoRef, id: number, status: DeploymentStatusInput): Promise<void> {
+    this.#maybeFail("createDeploymentStatus");
+    const deployment = this.deployments.find((d) => d.id === id);
+    if (!deployment) {
+      return Promise.reject(new Error(`déploiement ${id} inconnu`));
+    }
+    deployment.statuses.push(status);
+    return Promise.resolve();
   }
 
   /** Pose un check run de la CI du projet (une autre App que Jules). */

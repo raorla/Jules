@@ -19,6 +19,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@jules/devops": "workspace:*",
     "zod": "4.6.7"
   },
   "devDependencies": {

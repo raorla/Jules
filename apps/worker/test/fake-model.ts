@@ -37,7 +37,7 @@ function sse(res: ServerResponse, events: Record<string, unknown>[]) {
 
 /** Un scénario par rôle, reconnu à l'outil de soumission présent dans la requête. */
 export type Scripts = Partial<
-  Record<"triage" | "spec" | "design" | "build" | "review" | "learn", Step[]>
+  Record<"triage" | "spec" | "design" | "build" | "review" | "learn" | "devops", Step[]>
 >;
 const ROLE_TOOLS = {
   triage: "mcp__jules__submit_triage",
@@ -46,6 +46,7 @@ const ROLE_TOOLS = {
   build: "mcp__jules__submit_build",
   review: "mcp__jules__submit_review",
   learn: "mcp__jules__propose_lessons",
+  devops: "mcp__jules__submit_change_plan",
 } as const;
 
 /** Scénarios fixes, ou choisis selon la requête (par exemple selon le prompt système reçu). */

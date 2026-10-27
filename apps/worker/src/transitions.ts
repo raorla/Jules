@@ -18,6 +18,7 @@ export type Applied = TransitionResult & { version?: number };
 export function contextOf(task: TaskRow): TaskContext {
   return {
     state: task.state,
+    agent: task.agent,
     autonomy: task.autonomy ?? "L0",
     type: (task.type as TaskContext["type"]) ?? undefined,
     risk: task.risk ?? undefined,

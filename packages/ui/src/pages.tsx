@@ -21,11 +21,13 @@ import {
   type Command,
   type Me,
   type Metrics,
+  type Plan,
   type Repo,
   type TaskDetail,
   type TaskSummary,
 } from "./api.js";
 import { ArtifactCards } from "./artifacts.js";
+import { PendingPlans } from "./devops.js";
 import {
   Card,
   Chip,
@@ -208,8 +210,24 @@ function TaskActions({ detail }: { detail: TaskDetail }) {
       void client.invalidateQueries({ queryKey: ["task", detail.task.id] });
     },
   });
+  const sensitive = useSensitiveAction();
   const state = detail.task.state;
-  const awaiting = state === "awaiting_spec_approval" || state === "awaiting_design_approval";
+  const awaiting =
+    state === "awaiting_spec_approval" ||
+    state === "awaiting_design_approval" ||
+    state === "awaiting_plan_approval";
+  // Un plan de production demande la passkey : l'api le signale, le dialogue s'ouvre.
+  const approve = () =>
+    void sensitive
+      .run("approuver un plan de production", () =>
+        sendCommand(detail.task.id, { name: "approve" }),
+      )
+      .then((ok) => {
+        if (ok) {
+          setNotice(t("task.sent"));
+          void client.invalidateQueries({ queryKey: ["task", detail.task.id] });
+        }
+      });
   return (
     <div className={awaiting ? "ac" : "card"} style={{ padding: 18 }}>
       <div className="stack">
@@ -230,7 +248,7 @@ function TaskActions({ detail }: { detail: TaskDetail }) {
               >
                 {t("task.revise")}
               </button>
-              <button className="pill primary" onClick={() => send.mutate({ name: "approve" })}>
+              <button className="pill primary" onClick={approve}>
                 {t("task.approve")}
               </button>
             </div>
@@ -264,6 +282,7 @@ function TaskActions({ detail }: { detail: TaskDetail }) {
             {send.error.message}
           </p>
         )}
+        {sensitive.dialog}
       </div>
     </div>
   );
@@ -396,7 +415,7 @@ export function TaskPage() {
         {task.autonomy && <Chip>{task.autonomy}</Chip>}
       </div>
       <Card title={t("task.phases")}>
-        <PhaseTimeline state={task.state} />
+        <PhaseTimeline state={task.state} agent={task.agent} />
       </Card>
       {task.lastError &&
         ["blocked", "failed", "waiting_provider", "awaiting_design_approval"].includes(
@@ -473,14 +492,20 @@ export function ApprovalsPage() {
     queryKey: ["approvals"],
     queryFn: () => api<TaskSummary[]>("/v1/approvals"),
   });
-  const list = approvals.data ?? [];
+  const plans = useQuery({
+    queryKey: ["plans", "pending"],
+    queryFn: () => api<Plan[]>("/v1/plans?status=pending_approval"),
+  });
+  // Une tâche DevOps en attente est montrée par son plan (actions exactes, environnement).
+  const list = (approvals.data ?? []).filter((task) => task.state !== "awaiting_plan_approval");
   return (
     <div className="stack">
       <h1 className="headline">
         {t("approvals.title")}
-        <span> · {list.length}</span>
+        <span> · {list.length + (plans.data?.length ?? 0)}</span>
       </h1>
-      {list.length === 0 ? (
+      <PendingPlans />
+      {list.length === 0 && (plans.data?.length ?? 0) > 0 ? null : list.length === 0 ? (
         <Card>
           <EmptyState
             title={t("approvals.empty_title")}

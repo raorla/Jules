@@ -91,7 +91,7 @@ async function prepareTrigger(deps: WorkerDeps, event: EventRow): Promise<Apply>
       .values({
         orgId,
         repoId,
-        agent: "developer",
+        agent: trigger.agent ?? "developer",
         issueNumber: trigger.issue.number,
         title: trigger.issue.title,
         request: trigger.request,

@@ -263,7 +263,7 @@ Après M5, le noyau est déployé en L1 sur 2 ou 3 repos de `MTONGASWARM`. Chaqu
 ### M7 — Agent DevOps (L)
 
 **Livrables**
-- `packages/ssh` : connexions durcies, clé d'hôte épinglée, ssh-agent temporaire, `sudo -n`, délais.
+- `packages/ssh` : connexions durcies, clé d'hôte épinglée, clé privée en mémoire le temps d'une connexion, `sudo -n`, délais.
 - `packages/devops` :
   - classification des commandes par parseur shell ;
   - plans de changement exécutés par le worker ;
@@ -289,6 +289,8 @@ Après M5, le noyau est déployé en L1 sur 2 ou 3 repos de `MTONGASWARM`. Chaqu
 - Un changement de clé d'hôte bloque le serveur.
 - Un déploiement complet staging → production réussit sur un repo pilote, avec un retour arrière déclenché volontairement en staging.
 - Aucune clé SSH n'apparaît dans le sandbox, les logs ou l'audit (test).
+
+> Statut (27/10/2026) : code livré. Chaque critère de la DoD est un test automatisé, sur une vraie base, de vrais serveurs OpenSSH (`images/ssh-test`) et un vrai git : 288 commandes classées (dont tout le jeu piégé) avec 100 % de couverture de `packages/devops` ; une commande hors plan refusée avec la consigne d'en soumettre un nouveau, et un plan modifié après approbation jamais exécuté ; un vrai processus worker tué (SIGKILL) pendant l'étape 2 laisse le plan `interrupted`, sans relance ; deux workers qui se disputent un serveur passent l'un après l'autre ; l'approbation de la production depuis GitHub refusée tant que le réglage admin est coupé, et sans passkey sur le web ; une clé d'hôte changée bloque le serveur ; aucune clé dans le sandbox, les fichiers d'exécution, les journaux ou l'audit, même quand le serveur l'affiche. Le pipeline complet passe de bout en bout : PR mergée, CI verte, staging vérifié, production approuvée avec passkey, et un retour arrière volontaire en staging qui n'atteint jamais la production. Le flux GitHub (`@jules devops`, plan publié, `/jules approve`) tourne avec le vrai binaire Claude Code dans le sandbox. Écarts assumés : la clé privée reste en mémoire du worker (client `ssh2`) au lieu d'un ssh-agent ; le rapport final est rédigé par le worker à partir des sorties réelles, pas par l'agent ; `server_publish_file` répond « pas encore disponible » ; les fenêtres de déploiement ne sont pas encore configurables. Restent, sur l'infrastructure réelle : un déploiement staging → production sur un repo pilote.
 
 ### M8 — Agent Sécurité (M)
 

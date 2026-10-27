@@ -88,7 +88,8 @@ services:
     group_add: ["${DOCKER_GID:?DOCKER_GID manquant dans deploy/.env (getent group docker)}"]
     depends_on:
       migrate: { condition: service_completed_successfully }
-    # `egress` : sortie vers api.github.com et api.anthropic.com. Le worker n'est joignable par aucun autre service.
+    # `egress` : sortie vers GitHub, le fournisseur de modèle et, en SSH, les serveurs opérés par
+    # l'agent DevOps (M7). Le worker n'est joignable par aucun autre service.
     networks: [db, egress]
     <<: *hardening
 

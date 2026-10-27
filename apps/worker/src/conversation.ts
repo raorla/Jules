@@ -1,5 +1,6 @@
 import { appendAudit } from "@jules/audit";
 import { authorize, parseCommand, type Command } from "@jules/commands";
+import type { HumanRole } from "@jules/policy";
 import {
   and,
   approvals,
@@ -15,7 +16,7 @@ import {
   commands as commandsTable,
   type Tx,
 } from "@jules/db";
-import type { RepoRef } from "@jules/forge";
+import type { RepoRef, RepoRole } from "@jules/forge";
 import type { WorkerDeps } from "./deps.js";
 import { upsertInstallation, upsertRepo, upsertUser } from "./identities.js";
 import { enqueueEffect } from "./outbox.js";
@@ -293,7 +294,11 @@ export async function prepareConversation(
       return { status: "ignored", reason: "no_task" };
     }
 
-    const result = await applyCommand(tx, deps, task, cmd, actor);
+    const result = await applyCommand(tx, deps, task, cmd, actor, {
+      source: "github",
+      role,
+      stepUp: false,
+    });
     const commandId = await record(
       cmd.name,
       cmd,
@@ -337,14 +342,79 @@ type CommandResult =
     }
   | { ok: false; reason: string };
 
+export type CommandContext = {
+  source: "github" | "web" | "desktop" | "cli";
+  /** Droits effectifs : rôle Jules plafonné par la permission GitHub sur le repo. */
+  role: RepoRole;
+  /** Passkey présentée au moment de la commande (web et desktop seulement). */
+  stepUp: boolean;
+};
+
+/** Échelle de la policy : `maintain` donne maintainer, `write` member, en dessous viewer. */
+const HUMAN_ROLE: Record<RepoRole, HumanRole> = {
+  admin: "admin",
+  maintain: "maintainer",
+  write: "member",
+  triage: "viewer",
+  read: "viewer",
+  none: "viewer",
+};
+
 export async function applyCommand(
   tx: Tx,
   deps: WorkerDeps,
   task: TaskRow,
   cmd: Command,
   actor: { type: "user"; id: string },
+  context: CommandContext = { source: "github", role: "none", stepUp: false },
 ): Promise<CommandResult> {
   const gate = task.state === "awaiting_spec_approval" ? "H1" : "H2";
+  // Plan de changement en attente (HC1) : la policy décide, production et quatre yeux compris.
+  if (
+    task.agent === "devops" &&
+    task.state === "awaiting_plan_approval" &&
+    (cmd.name === "approve" || cmd.name === "revise" || cmd.name === "cancel")
+  ) {
+    const plan = deps.plans ? await deps.plans.pendingForTask(tx, task.id) : undefined;
+    if (!plan || !deps.plans) {
+      return { ok: false, reason: "aucun plan en attente pour cette tâche" };
+    }
+    const decided = await deps.plans.decideOn(
+      tx,
+      plan,
+      cmd.name === "approve" ? "approve" : "reject",
+      {
+        userId: actor.id,
+        role: HUMAN_ROLE[context.role],
+        source: context.source,
+        stepUp: context.stepUp,
+      },
+    );
+    if (!decided.ok) {
+      return { ok: false, reason: decided.reason };
+    }
+    if (cmd.name === "revise") {
+      await storeHumanInput(tx, task, "revise", cmd.feedback);
+    }
+    const r = await applyTransition(tx, task, { type: cmd.name }, { actor });
+    return r.ok
+      ? {
+          ok: true,
+          reason: r.reason,
+          ...(cmd.name === "cancel"
+            ? {}
+            : {
+                approval: {
+                  gate: "HC1",
+                  decision: cmd.name,
+                  taskVersion: task.version,
+                  riskApproved: null,
+                  comment: cmd.name === "revise" ? cmd.feedback : null,
+                },
+              }),
+        }
+      : r;
+  }
   switch (cmd.name) {
     case "approve":
     case "revise": {

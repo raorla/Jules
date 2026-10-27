@@ -7,6 +7,7 @@ import {
   artifacts,
   asc,
   auditLog,
+  changePlans,
   commands,
   desc,
   eq,
@@ -40,6 +41,7 @@ import { guard, sessionOf } from "./session.js";
 const APPROVAL_STATES = [
   "awaiting_spec_approval",
   "awaiting_design_approval",
+  "awaiting_plan_approval",
   "awaiting_info",
 ] as const;
 
@@ -93,6 +95,7 @@ export function registerRoutes(
         repo,
         title: task.title,
         state: task.state,
+        agent: task.agent,
         type: task.type,
         size: task.size,
         risk: task.risk,
@@ -227,6 +230,7 @@ export function registerRoutes(
       repo,
       title: task.title,
       state: task.state,
+      agent: task.agent,
       risk: task.risk,
       type: task.type,
       issueNumber: task.issueNumber,
@@ -256,6 +260,26 @@ export function registerRoutes(
       if (order.indexOf(session.role) > order.indexOf(needed)) {
         return reply.code(403).send({ error: `rôle ${needed} requis` });
       }
+      // Approuver un plan de production exige une passkey au moment même (ARCHITECTURE.md §9).
+      const stepUp = session.stepUpUntil !== null && session.stepUpUntil > new Date();
+      if (parsed.data.name === "approve" && task.state === "awaiting_plan_approval" && !stepUp) {
+        const [production] = await db
+          .select({ id: changePlans.id })
+          .from(changePlans)
+          .where(
+            and(
+              eq(changePlans.taskId, task.id),
+              eq(changePlans.status, "pending_approval"),
+              eq(changePlans.environment, "production"),
+            ),
+          )
+          .limit(1);
+        if (production) {
+          return reply
+            .code(403)
+            .send({ error: "passkey requise pour approuver la production", stepUp: true });
+        }
+      }
       const [row] = await db
         .insert(commands)
         .values({
@@ -264,7 +288,7 @@ export function registerRoutes(
           source: session.kind,
           authorId: session.userId,
           name: parsed.data.name,
-          args: parsed.data,
+          args: { ...parsed.data, stepUp },
           decision: "pending",
           reason: "en attente du worker",
         })

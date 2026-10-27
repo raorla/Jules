@@ -13,6 +13,7 @@ import {
   type Triage,
 } from "@jules/artifacts";
 import {
+  PLAYBOOKS_PATH,
   REPO_CONFIG_PATH,
   effectiveAutonomy,
   effectiveBudget,
@@ -33,6 +34,7 @@ import {
   lessons,
   repos,
   runs,
+  servers,
   sql,
   tasks,
   type Db,
@@ -50,6 +52,9 @@ import {
   type RepoRef,
 } from "@jules/forge";
 import { ALWAYS_DENIED_CAPABILITIES, ROLE_CAPABILITIES, decide } from "@jules/policy";
+import { parsePlaybooks, type Playbook } from "@jules/devops";
+import type { PlanService } from "./devops/plans.js";
+import type { ServerService } from "./devops/servers.js";
 import { computeRisk, estimateRisk } from "@jules/risk";
 import { renderReport, verdict } from "@jules/gates";
 import type { SandboxDriver } from "@jules/sandbox";
@@ -85,7 +90,8 @@ export type AgentRole =
   | "developer"
   | "reviewer"
   | "security_reviewer"
-  | "learner";
+  | "learner"
+  | "devops";
 
 /** Ce qui distingue les rôles (ARCHITECTURE.md §6.1). */
 const ROLE_SPECS: Record<
@@ -126,6 +132,13 @@ const ROLE_SPECS: Record<
   },
   // Le learner n'a ni outil intégré ni workspace : il ne lit que ce que les humains ont dit et fait.
   learner: { tools: [], workspace: "none", submits: "lessons", effort: "low" },
+  // DevOps (§6.2) : aucun outil d'édition, le repo en lecture seule pour le contexte.
+  devops: {
+    tools: ["Read", "Glob", "Grep"],
+    workspace: "ro",
+    submits: "change_plan",
+    effort: "high",
+  },
 };
 
 /** Modèle par défaut du reviewer : un autre que celui du développeur (ARCHITECTURE.md §6.1). */
@@ -140,6 +153,8 @@ export type OrchestratorDeps = {
   driver: SandboxDriver;
   log: Logger;
   masker: Masker;
+  /** Accès aux serveurs et plans, pour l'agent DevOps (M7). */
+  devops?: { servers: ServerService; plans: PlanService };
   config: {
     runsDir: string;
     promptsDir: string;
@@ -646,6 +661,17 @@ export class Orchestrator {
       const conventions =
         (await readFileAt(pristine, baseSha, "AGENTS.md")) ??
         (await readFileAt(pristine, baseSha, "CLAUDE.md"));
+      // Playbooks lus sur la branche par défaut, jamais sur une branche de l'agent (§9).
+      let playbooks: Record<string, Playbook> = {};
+      if (role === "devops") {
+        const text = await readFileAt(pristine, baseSha, PLAYBOOKS_PATH);
+        const parsed = text ? parsePlaybooks(text) : { ok: true as const, value: {} };
+        if (parsed.ok) {
+          playbooks = parsed.value;
+        } else {
+          runLog.warn({ errors: parsed.errors }, "playbooks invalides : aucun n'est utilisable");
+        }
+      }
       if (task.autonomy === null) {
         // Premier passage : autonomie, langue et budget de la tâche, fixés une fois pour toutes.
         await db
@@ -694,6 +720,9 @@ export class Orchestrator {
           ...(role === "learner" && task.baseSha && task.branch
             ? { humanCommits: await humanCommits(pristine, task.baseSha, task.branch) }
             : {}),
+          ...(role === "devops"
+            ? { devops: await this.#devopsContext(task.orgId, playbooks) }
+            : {}),
           ...(spec.submits === "review" && task.baseSha
             ? {
                 diff: await git(
@@ -715,6 +744,9 @@ export class Orchestrator {
           log: runLog,
           masker: this.#deps.masker,
           model: config.model,
+          ...(role === "devops" && this.#deps.devops
+            ? { devops: { ...this.#deps.devops, playbooks } }
+            : {}),
           onBudgetExceeded: (id) => {
             runLog.warn("budget atteint : arrêt du sandbox");
             this.#stopReasons.set(id, "budget");
@@ -886,6 +918,28 @@ export class Orchestrator {
           type: "design_submitted",
           adrPlanned: (submitted.content as Design).adr !== undefined,
         });
+      } else if (role === "devops") {
+        if (submitted?.kind === "change_plan") {
+          const content = submitted.content as { approvalRequired: boolean };
+          await this.#apply(task, {
+            type: "plan_submitted",
+            approvalRequired: content.approvalRequired,
+          });
+        } else if (runStatus === "succeeded" && result?.text) {
+          // Diagnostic sans changement : le compte rendu de l'agent devient le rapport de la tâche.
+          await this.#apply(task, { type: "diagnosis_reported" }, {}, async (tx) => {
+            await tx.insert(artifacts).values({
+              orgId: task.orgId,
+              taskId: task.id,
+              runId: run.id,
+              kind: "diagnosis",
+              version: 1,
+              content: { text: this.#deps.masker.mask(result.text ?? "") },
+            });
+          });
+        } else {
+          await this.#apply(task, { type: "run_without_result" });
+        }
       } else if (role === "learner") {
         // Avec ou sans leçon, le retour d'expérience termine la tâche ; les leçons sont publiées dans la PR.
         const proposed = await db.select().from(lessons).where(eq(lessons.taskId, task.id));
@@ -1049,11 +1103,51 @@ export class Orchestrator {
   }
 
   /** Message de l'exécution : la demande et tout ce qui la précède, encadrés comme des données (§15). */
+  /** Serveurs et playbooks que l'agent DevOps peut viser (sans adresse ni clé : il n'en a pas besoin). */
+  async #devopsContext(orgId: string, playbooks: Record<string, Playbook>): Promise<string> {
+    const rows = await this.#deps.db
+      .select({
+        name: servers.name,
+        environment: servers.environment,
+        level: servers.level,
+        hostKeyStatus: servers.hostKeyStatus,
+        frozen: servers.frozen,
+      })
+      .from(servers)
+      .where(eq(servers.orgId, orgId))
+      .orderBy(asc(servers.name));
+    return [
+      "# Serveurs",
+      "",
+      ...(rows.length === 0
+        ? ["Aucun serveur n'est déclaré dans Jules."]
+        : rows.map(
+            (r) =>
+              `- \`${r.name}\` : ${r.environment}, niveau ${r.level}${r.frozen ? ", gelé" : ""}${r.hostKeyStatus === "trusted" ? "" : `, clé d'hôte ${r.hostKeyStatus} (inutilisable)`}`,
+          )),
+      "",
+      "# Playbooks (.jules/playbooks.yml, branche par défaut)",
+      "",
+      ...(Object.keys(playbooks).length === 0
+        ? ["Aucun playbook."]
+        : Object.entries(playbooks).map(
+            ([name, pb]) =>
+              `- \`${name}\`${pb.description ? ` : ${pb.description}` : ""}${
+                Object.keys(pb.params).length > 0
+                  ? ` · paramètres : ${Object.entries(pb.params)
+                      .map(([k, p]) => `${k} (${p.type}${p.required ? ", requis" : ""})`)
+                      .join(", ")}`
+                  : ""
+              }`,
+          )),
+    ].join("\n");
+  }
+
   async #prompt(
     task: TaskRow,
     repo: RepoContext,
     conventions: string | undefined,
-    extra: { diff?: string; humanCommits?: string } = {},
+    extra: { diff?: string; humanCommits?: string; devops?: string } = {},
   ): Promise<string> {
     const rows = await this.#deps.db
       .select()
@@ -1083,10 +1177,15 @@ export class Orchestrator {
         "</conventions>",
       );
     }
+    if (extra.devops) {
+      sections.push("", extra.devops);
+    }
     for (const [kind, title] of [
       ["triage", "Triage"],
       ["spec", "Spec"],
       ["design", "Conception"],
+      ["change_plan", "Plan de changement précédent"],
+      ["plan_report", "Rapport d'exécution du plan précédent"],
     ] as const) {
       const content = latest(kind);
       if (content) {

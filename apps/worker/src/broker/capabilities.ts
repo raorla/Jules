@@ -12,6 +12,16 @@ import { and, artifacts, desc, eq, lessons, tasks, toolCalls, type Tx } from "@j
 import { decide, type Decision, type Role } from "@jules/policy";
 import { enqueueEffect } from "../outbox.js";
 import { Masker, truncate } from "./masking.js";
+import {
+  serverCrontabRead,
+  serverExec,
+  serverGit,
+  serverPublishFile,
+  serverRunPlaybook,
+  submitChangePlan,
+  type DevopsTools,
+  type ToolResult,
+} from "./server-tools.js";
 
 // Traitement d'un appel d'outil (ARCHITECTURE.md §7) : validation, limites, policy, audit, effet.
 // Tout passe dans une transaction : l'appel journalisé, sa décision et son effet sont écrits ensemble.
@@ -22,9 +32,18 @@ export type CallContext = {
   taskId: string;
   role: Role;
   stopped: boolean;
+  /** Outils serveur de l'agent DevOps : absents pour les autres rôles. */
+  devops?: DevopsTools;
 };
 
-export type CallOutcome = { status: number; text: string; decision: Decision };
+export type CallOutcome = {
+  status: number;
+  text: string;
+  decision: Decision;
+  /** Travail à faire après la transaction (commande SSH) ; son texte devient la réponse. */
+  after?: () => Promise<string>;
+  callId?: string;
+};
 
 type Limit = { perRun: number; minIntervalMs?: number };
 
@@ -39,6 +58,11 @@ const LIMITS: Partial<Record<CapabilityName, Limit>> = {
   submit_design: { perRun: 1 },
   submit_review: { perRun: 1 },
   propose_lessons: { perRun: 1 },
+  server_exec: { perRun: 40 },
+  server_crontab_read: { perRun: 10 },
+  server_git: { perRun: 10 },
+  server_run_playbook: { perRun: 5 },
+  submit_change_plan: { perRun: 1 },
 };
 
 async function latest<T>(tx: Tx, taskId: string, kind: string): Promise<T | undefined> {
@@ -100,7 +124,12 @@ async function refreshStatus(tx: Tx, ctx: CallContext, reason: string): Promise<
   });
 }
 
-type Handler = (tx: Tx, ctx: CallContext, input: never, callId: string) => Promise<string>;
+type Handler = (
+  tx: Tx,
+  ctx: CallContext,
+  input: never,
+  callId: string,
+) => Promise<string | ToolResult> | ToolResult;
 
 async function storeArtifact(
   tx: Tx,
@@ -116,6 +145,21 @@ async function storeArtifact(
 }
 
 const handlers: Partial<Record<CapabilityName, Handler>> = {
+  server_exec: (tx, ctx, input: { server: string; command: string }) => serverExec(tx, ctx, input),
+  server_crontab_read: (tx, ctx, input: { server: string }) => serverCrontabRead(tx, ctx, input),
+  server_git: (
+    tx,
+    ctx,
+    input: { server: string; operation: "pull" | "fetch" | "clone"; path: string; url?: string },
+  ) => serverGit(tx, ctx, input),
+  server_run_playbook: (
+    tx,
+    ctx,
+    input: { server: string; name: string; params: Record<string, string> },
+  ) => serverRunPlaybook(tx, ctx, input),
+  server_publish_file: () => serverPublishFile(),
+  submit_change_plan: (tx, ctx, input: Parameters<typeof submitChangePlan>[2]) =>
+    submitChangePlan(tx, ctx, input, (content) => storeArtifact(tx, ctx, "change_plan", content)),
   submit_triage: async (tx, ctx, input: object) => {
     const version = await storeArtifact(tx, ctx, "triage", input);
     return `ok: triage v${version} enregistré. Termine maintenant l'exécution.`;
@@ -325,10 +369,11 @@ export async function handleCapability(
   // L'identifiant de l'appel sert de clé d'idempotence aux effets qu'il déclenche.
   const callId = await record({ status: 200, decision, text: "" });
   const handler = handlers[name];
-  const text = handler ? await handler(tx, ctx, parsed.data as never, callId) : "ok";
+  const result = handler ? await handler(tx, ctx, parsed.data as never, callId) : "ok";
+  const { text, status = 200, after } = typeof result === "string" ? { text: result } : result;
   await tx
     .update(toolCalls)
-    .set({ output: truncate(text, 2_000), durationMs: Date.now() - startedAt })
+    .set({ output: truncate(masker.mask(text), 2_000), durationMs: Date.now() - startedAt })
     .where(eq(toolCalls.id, callId));
-  return { status: 200, decision, text };
+  return { status, decision, text, ...(after ? { after, callId } : {}) };
 }

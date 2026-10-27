@@ -83,12 +83,22 @@ describe("detectTrigger", () => {
     ],
     ["sans mention", issueComment({ body: "merci" }), "no_mention"],
     [
-      "@jules devops (M7)",
-      issueComment({ body: "@jules devops redémarre nginx" }),
-      "subcommand_unavailable:devops",
+      "@jules security (M8)",
+      issueComment({ body: "@jules security audite le repo" }),
+      "subcommand_unavailable:security",
     ],
   ])("ignore %s", (_, payload, reason) => {
     expect(detectTrigger("issue_comment", payload, settings)).toEqual({ ignored: reason });
+  });
+
+  it("crée une demande DevOps avec @jules devops", () => {
+    expect(
+      detectTrigger(
+        "issue_comment",
+        issueComment({ body: "@jules devops redémarre nginx" }),
+        settings,
+      ),
+    ).toMatchObject({ trigger: { agent: "devops", request: "@jules devops redémarre nginx" } });
   });
 
   it("reconnaît @jules setup", () => {

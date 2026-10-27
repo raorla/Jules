@@ -15,6 +15,10 @@ export const TASK_STATES = [
   "reviewing",
   "awaiting_human_review",
   "learning",
+  // Agent DevOps (WORKFLOW.md §12) : diagnostic, plan de changement, exécution par le worker.
+  "diagnosing",
+  "awaiting_plan_approval",
+  "executing",
   "done",
   "waiting_provider",
   "blocked",
@@ -27,7 +31,9 @@ export type Risk = "low" | "medium" | "high";
 export type TaskType = "bug" | "feature" | "refactor" | "chore" | "docs" | "test" | "security";
 export type Size = "S" | "M" | "L";
 export type Autonomy = "L0" | "L1" | "L2";
-export type Role = "triager" | "specifier" | "architect" | "developer" | "reviewer" | "learner";
+export type Role =
+  "triager" | "specifier" | "architect" | "developer" | "reviewer" | "learner" | "devops";
+export type Agent = "developer" | "devops" | "security";
 
 /** États où une exécution d'agent doit tourner, et le rôle qui l'exécute. */
 export const RUNNABLE_STATES: Readonly<Partial<Record<TaskState, Role>>> = {
@@ -37,6 +43,7 @@ export const RUNNABLE_STATES: Readonly<Partial<Record<TaskState, Role>>> = {
   building: "developer",
   reviewing: "reviewer",
   learning: "learner",
+  diagnosing: "devops",
 };
 
 export const TERMINAL_STATES: readonly TaskState[] = ["done", "cancelled"];
@@ -51,6 +58,8 @@ export const LIMITS = {
 
 export type TaskContext = {
   readonly state: TaskState;
+  /** Agent de la tâche : `developer` si absent. */
+  readonly agent?: Agent | undefined;
   readonly autonomy: Autonomy;
   readonly type?: TaskType | undefined;
   readonly risk?: Risk | undefined;
@@ -83,6 +92,15 @@ export type TaskEvent =
   | { type: "human_changes_requested" }
   | { type: "pr_closed" }
   | { type: "lessons_submitted" }
+  /** DevOps : plan soumis, qui passe par GC1 ; l'approbation humaine dépend du niveau D (HC1). */
+  | { type: "plan_submitted"; approvalRequired: boolean }
+  /** DevOps : diagnostic en lecture seule, sans changement à faire. */
+  | { type: "diagnosis_reported" }
+  | { type: "plan_completed" }
+  | { type: "plan_failed"; reason: string }
+  /** Le worker s'est arrêté au milieu du plan : rien n'est relancé seul, un humain décide. */
+  | { type: "plan_interrupted" }
+  | { type: "plan_expired" }
   | { type: "run_without_result" }
   | { type: "limit_reached"; reason: string }
   | { type: "provider_unavailable" }
@@ -196,9 +214,51 @@ export function transition(ctx: TaskContext, event: TaskEvent): TransitionResult
 
   switch (state) {
     case "received":
-      return event.type === "start"
-        ? ok("triaging", "réception")
-        : refuse(`${event.type} inattendu en ${state}`);
+      if (event.type !== "start") {
+        return refuse(`${event.type} inattendu en ${state}`);
+      }
+      return ctx.agent === "devops" ? ok("diagnosing", "réception") : ok("triaging", "réception");
+
+    case "diagnosing":
+      if (event.type === "questions_asked") {
+        return askQuestions(ctx);
+      }
+      if (event.type === "plan_submitted") {
+        return event.approvalRequired
+          ? ok("awaiting_plan_approval", "plan soumis, approbation humaine requise (HC1)")
+          : ok("executing", "plan soumis, exécution directe à ce niveau d'autonomie");
+      }
+      if (event.type === "diagnosis_reported") {
+        return ok("done", "diagnostic rendu, aucun changement");
+      }
+      break;
+
+    case "awaiting_plan_approval":
+      if (event.type === "approve") {
+        return ok("executing", "plan approuvé (HC1)");
+      }
+      if (event.type === "revise") {
+        return ok("diagnosing", "plan à reprendre");
+      }
+      if (event.type === "plan_expired") {
+        return ok("blocked", "plan expiré sans approbation", { resumeState: "diagnosing" });
+      }
+      break;
+
+    case "executing":
+      if (event.type === "plan_completed") {
+        return ok("done", "plan exécuté et vérifié");
+      }
+      if (event.type === "plan_failed") {
+        return ok("failed", event.reason, { resumeState: "diagnosing" });
+      }
+      if (event.type === "plan_interrupted") {
+        // Une relance repart du diagnostic : jamais de l'étape interrompue.
+        return ok("blocked", "plan interrompu : un humain décide de la suite", {
+          resumeState: "diagnosing",
+        });
+      }
+      break;
 
     case "triaging":
       if (event.type === "questions_asked") {

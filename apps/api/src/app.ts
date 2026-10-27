@@ -7,6 +7,7 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastif
 import type pg from "pg";
 import { registerOAuth, type OAuthConfig } from "./oauth.js";
 import { registerPasskeys, type RelyingParty } from "./passkeys.js";
+import { registerDevopsRoutes } from "./devops-routes.js";
 import { registerRoutes } from "./routes.js";
 
 // api (ARCHITECTURE.md §4.2) : REST `/v1` et SSE pour le web et le desktop, et la SPA servie avec une
@@ -69,6 +70,7 @@ export async function buildApi(options: ApiOptions): Promise<FastifyInstance> {
   });
   registerPasskeys(app, { db: options.db, rp });
   registerRoutes(app, { db: options.db, publicOrigin, pool: options.pool });
+  registerDevopsRoutes(app, { db: options.db, publicOrigin });
 
   if (options.webDir && existsSync(join(options.webDir, "index.html"))) {
     await app.register(fastifyStatic, { root: options.webDir, wildcard: false });

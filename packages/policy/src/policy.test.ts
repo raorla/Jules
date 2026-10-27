@@ -4,8 +4,10 @@ import {
   ROLE_CAPABILITIES,
   decide,
   matchesAny,
+  type PlanApprovalRequest,
   type PushRequest,
   type Role,
+  type ServerActionRequest,
 } from "./policy.js";
 
 const running = { stopped: false };
@@ -157,5 +159,120 @@ describe("matchesAny", () => {
   it("couvre les fichiers cachés", () => {
     expect(matchesAny(".env", [".env*"])).toBe(true);
     expect(matchesAny("src/a.ts", [".env*"])).toBe(false);
+  });
+});
+
+describe("actions sur un serveur (ARCHITECTURE.md §6.2)", () => {
+  const server = (overrides: Partial<ServerActionRequest> = {}): ServerActionRequest => ({
+    action: "server_action",
+    level: "D1",
+    environment: "staging",
+    kind: "command",
+    commandClass: "change",
+    via: "direct",
+    hostKeyTrusted: true,
+    frozen: false,
+    controls: running,
+    ...overrides,
+  });
+  const effect = (overrides: Partial<ServerActionRequest>) => decide(server(overrides)).effect;
+
+  it("suit la matrice D0 à D3 hors production", () => {
+    const matrix = (["D0", "D1", "D2", "D3"] as const).map((level) => [
+      effect({ level, commandClass: "read" }),
+      effect({ level, kind: "playbook" }),
+      effect({ level }),
+    ]);
+    expect(matrix).toEqual([
+      ["allow", "deny", "deny"],
+      ["allow", "require_approval", "require_approval"],
+      ["allow", "allow", "require_approval"],
+      ["allow", "allow", "allow"],
+    ]);
+  });
+
+  it("exige un plan approuvé en production, quel que soit le niveau", () => {
+    expect(effect({ level: "D3", environment: "production" })).toBe("require_approval");
+    expect(effect({ level: "D3", environment: "production", kind: "playbook" })).toBe(
+      "require_approval",
+    );
+    expect(effect({ level: "D3", environment: "production", commandClass: "read" })).toBe("allow");
+  });
+
+  it("autorise les étapes d'un plan approuvé, sauf en D0", () => {
+    expect(effect({ via: "plan", environment: "production" })).toBe("allow");
+    expect(effect({ via: "plan", level: "D0" })).toBe("deny");
+  });
+
+  it("refuse toujours une commande dangereuse, même dans un plan approuvé", () => {
+    expect(decide(server({ level: "D3", commandClass: "dangerous", via: "plan" }))).toMatchObject({
+      effect: "deny",
+      ruleId: "absolute.dangerous",
+    });
+  });
+
+  it("bloque tout sur une clé d'hôte non validée, et sous arrêt d'urgence", () => {
+    expect(decide(server({ hostKeyTrusted: false, commandClass: "read" })).ruleId).toBe(
+      "server.host_key",
+    );
+    expect(decide(server({ controls: stopped, commandClass: "read" })).ruleId).toBe(
+      "controls.stopped",
+    );
+  });
+
+  it("refuse les changements sur un environnement gelé et les déploiements bloqués", () => {
+    expect(decide(server({ frozen: true, via: "plan" })).ruleId).toBe("server.frozen");
+    expect(effect({ frozen: true, commandClass: "read" })).toBe("allow");
+    expect(decide(server({ kind: "playbook", deployBlocked: true, level: "D3" })).ruleId).toBe(
+      "server.deploy_blocked",
+    );
+  });
+});
+
+describe("approbation d'un plan (HC1)", () => {
+  const approval = (overrides: Partial<PlanApprovalRequest> = {}): PlanApprovalRequest => ({
+    action: "approve_plan",
+    environment: "production",
+    source: "web",
+    approverRole: "maintainer",
+    stepUp: true,
+    githubProductionApproval: false,
+    fourEyes: false,
+    approverIsRequester: false,
+    controls: running,
+    ...overrides,
+  });
+  const rule = (overrides: Partial<PlanApprovalRequest>) => decide(approval(overrides)).ruleId;
+
+  it("accepte la production depuis le web avec une passkey", () => {
+    expect(decide(approval()).effect).toBe("allow");
+  });
+
+  it("refuse la production depuis GitHub tant qu'un admin ne l'a pas activée", () => {
+    expect(rule({ source: "github", stepUp: false })).toBe("approval.github_production");
+    expect(decide(approval({ source: "github", githubProductionApproval: true })).effect).toBe(
+      "allow",
+    );
+    expect(rule({ source: "github", githubProductionApproval: true, approverRole: "member" })).toBe(
+      "approval.role",
+    );
+  });
+
+  it("exige la passkey sur le web et refuse le CLI en production", () => {
+    expect(rule({ stepUp: false })).toBe("approval.passkey");
+    expect(rule({ source: "cli" })).toBe("approval.passkey");
+  });
+
+  it("applique les quatre yeux quand l'option est active", () => {
+    expect(rule({ fourEyes: true, approverIsRequester: true })).toBe("approval.four_eyes");
+    expect(decide(approval({ fourEyes: false, approverIsRequester: true })).effect).toBe("allow");
+  });
+
+  it("laisse un member approuver hors production, jamais un viewer", () => {
+    expect(
+      decide(approval({ environment: "staging", approverRole: "member", source: "github" })).effect,
+    ).toBe("allow");
+    expect(rule({ environment: "staging", approverRole: "viewer" })).toBe("approval.role");
+    expect(rule({ controls: stopped })).toBe("controls.stopped");
   });
 });

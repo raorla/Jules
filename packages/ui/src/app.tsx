@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { api, configureApi, useLiveUpdates, type Me } from "./api.js";
+import { DeploymentsPage, ServerPage, ServersPage } from "./devops.js";
 import { initI18n } from "./i18n.js";
 import {
   ApprovalsPage,
@@ -41,6 +42,11 @@ function Authenticated({ me }: { me: Me }) {
   );
 }
 
+function ServersRoute() {
+  const me = useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/v1/me") });
+  return me.data ? <ServersPage me={me.data} /> : null;
+}
+
 function SettingsRoute() {
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/v1/me") });
   return me.data ? <SettingsPage me={me.data} /> : null;
@@ -63,6 +69,13 @@ const routes = [
   createRoute({ getParentRoute: () => rootRoute, path: "/audit", component: AuditPage }),
   createRoute({ getParentRoute: () => rootRoute, path: "/metrics", component: MetricsPage }),
   createRoute({ getParentRoute: () => rootRoute, path: "/evals", component: EvalsPage }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/servers", component: ServersRoute }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/servers/$id", component: ServerPage }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/deployments",
+    component: DeploymentsPage,
+  }),
 ];
 const router = createRouter({ routeTree: rootRoute.addChildren(routes) });
 

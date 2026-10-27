@@ -834,3 +834,16 @@ dialog::backdrop {
 .table td.num {
   white-space: nowrap;
 }
+
+/* Texte secondaire et code dans une ligne en retrait : même règle de contraste (--ink-recess). Le
+   code (commandes, empreintes) se coupe n'importe où plutôt que de faire défiler la page. */
+.row .muted,
+.row code,
+.gate code {
+  color: var(--ink-recess);
+}
+code {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}

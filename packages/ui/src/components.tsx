@@ -21,6 +21,7 @@ export function stateTone(state: TaskState): Tone {
   )
     return "warn";
   if (["blocked", "failed"].includes(state)) return "crit";
+  if (state === "awaiting_plan_approval") return "warn";
   if (state === "done") return "ok";
   if (state === "cancelled") return "neutral";
   return "info";
@@ -183,30 +184,57 @@ const PHASE_OF: Partial<Record<TaskState, number>> = {
 };
 
 /** Les 9 phases : la courante pulse en bleu, une phase qui attend un humain est orange. */
-export function PhaseTimeline({ state }: { state: TaskState }) {
+const DEVOPS_PHASES = ["diagnosis", "plan", "approval", "execution", "report"] as const;
+const DEVOPS_PHASE_OF: Partial<Record<TaskState, number>> = {
+  received: 0,
+  diagnosing: 0,
+  awaiting_info: 0,
+  awaiting_plan_approval: 2,
+  executing: 3,
+  done: 5,
+};
+
+/** Les phases de la tâche : la courante pulse en bleu, une phase qui attend un humain est orange. */
+export function PhaseTimeline({ state, agent }: { state: TaskState; agent?: string | undefined }) {
   const { t } = useTranslation();
-  const current = PHASE_OF[state] ?? -1;
+  const devops = agent === "devops";
+  const phases = devops
+    ? DEVOPS_PHASES.map((p) => `devops_phase.${p}`)
+    : PHASES.map((p) => `phase.${p}`);
+  const current = (devops ? DEVOPS_PHASE_OF : PHASE_OF)[state] ?? -1;
   const waiting = stateTone(state) === "warn";
   return (
     <ol className="phases" aria-label={t("task.phases")}>
-      {PHASES.map((phase, index) => {
+      {phases.map((key, index) => {
         const status =
           index < current ? "done" : index === current ? (waiting ? "waiting" : "current") : "todo";
         return (
           <li
-            key={phase}
+            key={key}
             className={`phase ${status}`}
             aria-current={index === current ? "step" : undefined}
           >
             <div className="bar" />
             <span>
               {index === current && <span className="bullet" aria-hidden="true" />}
-              {t(`phase.${phase}`)}
+              {t(key)}
             </span>
           </li>
         );
       })}
     </ol>
+  );
+}
+
+/** L'environnement est visible sur chaque action serveur (DESIGN.md §4) : production en rouge. */
+export function EnvChip({ environment }: { environment: string }) {
+  const { t } = useTranslation();
+  return (
+    <Chip
+      tone={environment === "production" ? "crit" : environment === "staging" ? "warn" : "neutral"}
+    >
+      {t(`env.${environment}`, environment)}
+    </Chip>
   );
 }
 
@@ -352,9 +380,11 @@ export function useSensitiveAction() {
     { purpose: string; run: () => Promise<unknown>; resolve: (ok: boolean) => void } | undefined
   >();
   const [error, setError] = useState<string | undefined>();
+  const [failure, setFailure] = useState<string | undefined>();
 
   const run = (purpose: string, action: () => Promise<unknown>) =>
     new Promise<boolean>((resolve) => {
+      setFailure(undefined);
       action()
         .then(() => {
           resolve(true);
@@ -364,8 +394,9 @@ export function useSensitiveAction() {
             setError(undefined);
             setPending({ purpose, run: action, resolve });
           } else {
+            // Erreur ordinaire (droits, validation) : affichée à côté de l'action, pas perdue.
+            setFailure(e instanceof Error ? e.message : String(e));
             resolve(false);
-            throw e;
           }
         });
     });
@@ -393,21 +424,26 @@ export function useSensitiveAction() {
             className="pill primary"
             onClick={() => {
               if (!pending) return;
-              stepUp(pending.purpose)
-                .then(() => pending.run())
-                .then(() => {
-                  pending.resolve(true);
-                  setPending(undefined);
-                })
-                .catch((e: unknown) => {
+              const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+              // Deux échecs distincts : la passkey elle-même (aucune enregistrée : 409), puis
+              // l'action rejouée, dont l'erreur est montrée telle quelle.
+              stepUp(pending.purpose).then(
+                () =>
+                  pending.run().then(
+                    () => {
+                      pending.resolve(true);
+                      setPending(undefined);
+                    },
+                    (e: unknown) => {
+                      setError(message(e));
+                    },
+                  ),
+                (e: unknown) => {
                   setError(
-                    e instanceof ApiError && e.status === 409
-                      ? t("stepup.none")
-                      : e instanceof Error
-                        ? e.message
-                        : String(e),
+                    e instanceof ApiError && e.status === 409 ? t("stepup.none") : message(e),
                   );
-                });
+                },
+              );
             }}
           >
             <Fingerprint aria-hidden="true" />
@@ -424,5 +460,17 @@ export function useSensitiveAction() {
       )}
     </Dialog>
   );
-  return { run, dialog };
+  return {
+    run,
+    dialog: (
+      <>
+        {dialog}
+        {failure && (
+          <p role="alert" className="chip crit">
+            {failure}
+          </p>
+        )}
+      </>
+    ),
+  };
 }

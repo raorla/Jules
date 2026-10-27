@@ -8,12 +8,14 @@ import {
   ListChecks,
   LogOut,
   OctagonX,
+  Rocket,
   ScrollText,
   Search,
+  Server as ServerIcon,
   Settings,
   ShieldAlert,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { api, type Me } from "./api.js";
 import { Chip, Dialog, useSensitiveAction } from "./components.js";
@@ -114,6 +116,33 @@ function KillSwitch({ me }: { me: Me }) {
   );
 }
 
+/** Notification quand une nouvelle approbation arrive : dans la page, et dans le système si permis. */
+function useApprovalNotice(count: number | undefined, message: string) {
+  const previous = useRef<number | undefined>(undefined);
+  const [toast, setToast] = useState(false);
+  useEffect(() => {
+    if (count === undefined) {
+      return undefined;
+    }
+    if (previous.current !== undefined && count > previous.current) {
+      setToast(true);
+      if (
+        typeof Notification !== "undefined" &&
+        Notification.permission === "granted" &&
+        document.hidden
+      ) {
+        new Notification("Jules", { body: message });
+      }
+      const timer = setTimeout(() => setToast(false), 6000);
+      previous.current = count;
+      return () => clearTimeout(timer);
+    }
+    previous.current = count;
+    return undefined;
+  }, [count, message]);
+  return toast;
+}
+
 export function Shell({ me, children }: { me: Me; children: ReactNode }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -122,6 +151,18 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
     queryKey: ["approvals"],
     queryFn: () => api<unknown[]>("/v1/approvals"),
   });
+  const plans = useQuery({
+    queryKey: ["plans", "pending"],
+    queryFn: () => api<{ taskId: string | null }[]>("/v1/plans?status=pending_approval"),
+  });
+  // Les plans d'une tâche sont déjà comptés avec elle ; ceux d'un déploiement s'ajoutent.
+  const pending =
+    (approvals.data?.length ?? 0) + (plans.data?.filter((p) => p.taskId === null).length ?? 0);
+  // Le compte ne vaut qu'une fois les deux listes chargées : sinon, un faux « nouveau » au chargement.
+  const toast = useApprovalNotice(
+    approvals.isSuccess && plans.isSuccess ? pending : undefined,
+    t("notify.approval"),
+  );
   const stops = useQuery({ queryKey: ["stop"], queryFn: () => api<unknown[]>("/v1/stop") });
   return (
     <div className="app">
@@ -142,7 +183,18 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
             to="/approvals"
             icon={<CheckCircle2 aria-hidden="true" />}
             label={t("nav.approvals")}
-            count={approvals.data?.length ?? 0}
+            count={pending}
+          />
+          <div className="nav-label">{t("nav.operations")}</div>
+          <NavItem
+            to="/servers"
+            icon={<ServerIcon aria-hidden="true" />}
+            label={t("nav.servers")}
+          />
+          <NavItem
+            to="/deployments"
+            icon={<Rocket aria-hidden="true" />}
+            label={t("nav.deployments")}
           />
           <div className="nav-label">{t("nav.oversight")}</div>
           <NavItem to="/metrics" icon={<BarChart3 aria-hidden="true" />} label={t("nav.metrics")} />
@@ -200,6 +252,11 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
         )}
         {children}
       </main>
+      {toast && (
+        <div className="toast show" role="status">
+          {t("notify.approval")}
+        </div>
+      )}
     </div>
   );
 }

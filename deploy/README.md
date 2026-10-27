@@ -122,7 +122,35 @@ Règles recommandées sur la branche par défaut (*Settings → Rules → Rulese
 
 La review de Jules est publiée en COMMENT : elle ne compte jamais comme une approbation.
 
-## 8. Sauvegardes
+## 8. Serveurs pour l'agent DevOps
+
+Sur chaque serveur, crée un utilisateur dédié (par exemple `jules`), avec un `sudo` limité aux commandes utiles et sans mot de passe (`sudo -n`) :
+
+```bash
+sudo adduser --disabled-password jules
+echo 'jules ALL=(root) NOPASSWD: /usr/bin/systemctl restart app, /usr/bin/docker' | sudo tee /etc/sudoers.d/jules
+```
+
+Puis, dans l'interface (*Serveurs*, admin, passkey) :
+1. **Enregistrer** le serveur : nom, hôte, utilisateur, environnement, repo déployé, et la **clé privée** SSH. Elle est scellée pour le worker dès réception et n'est plus jamais affichée.
+2. Le worker lit la **clé d'hôte** et l'affiche. Compare-la à la sortie de `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` sur le serveur, puis **valide** l'empreinte. Si elle change plus tard, le serveur est bloqué jusqu'à une nouvelle validation.
+3. Choisis le **niveau** : D0 (lecture seule) par défaut, D1 (tout changement passe par un plan approuvé), D2 (playbooks directs hors production), D3 (commandes directes hors production). La production exige toujours une approbation humaine avec passkey.
+
+Pour le pipeline de déploiement, le repo déclare dans `.jules/config.yml` :
+
+```yaml
+deploy:
+  staging: { server: web-staging, playbook: deploy }
+  production: { server: web-prod, playbook: deploy }
+```
+
+et dans `.jules/playbooks.yml` un playbook `deploy` avec ses paramètres typés (`ref: { type: git_sha, required: true }`), ses étapes, une vérification (`verify`) et un retour arrière (`rollback`, qui peut utiliser `{{previous_ref}}`). Un playbook sans vérification ou sans retour arrière n'est pas déployé. Chaque PR mergée sur la branche par défaut, CI verte, part en staging ; la production attend ensuite une approbation dans l'interface.
+
+Les réglages *quatre yeux* et *approbation de la production depuis GitHub* sont dans *Réglages* (admin, passkey). Les deux sont coupés par défaut.
+
+Si le worker s'arrête pendant un plan, le plan passe en `interrupted` au redémarrage et rien n'est relancé : regarde le journal des étapes du plan, vérifie l'état du serveur, puis relance la tâche (`/jules retry`) pour un nouveau diagnostic.
+
+## 9. Sauvegardes
 
 1. Renseigne le dépôt restic hors de l'hôte dans `deploy/backup.env` (S3, B2, SFTP…).
 2. Active la sauvegarde quotidienne :
@@ -141,7 +169,7 @@ La review de Jules est publiée en COMMENT : elle ne compte jamais comme une app
 
    Le script restaure la dernière sauvegarde dans une base jetable. Il vérifie ensuite les migrations, la chaîne d'audit et le déchiffrement de chaque secret, puis supprime la base.
 
-## 9. Opérations courantes
+## 10. Opérations courantes
 
 Toutes les commandes passent par le CLI du worker : `docker compose run --rm worker node dist/cli.js <commande>`.
 

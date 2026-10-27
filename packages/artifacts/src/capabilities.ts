@@ -1,3 +1,4 @@
+import { changePlanSchema } from "@jules/devops";
 import { z } from "zod";
 import { designSchema, reviewSchema, specSchema, triageSchema } from "./phases.js";
 
@@ -5,6 +6,10 @@ import { designSchema, reviewSchema, specSchema, triageSchema } from "./phases.j
 // et le broker les revalide : le sandbox n'est pas digne de confiance.
 
 const line = (max: number) => z.string().trim().min(1).max(max);
+const serverName = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9_.-]{0,62}$/)
+  .describe("Nom du serveur dans Jules.");
 
 export const capabilityInputs = {
   post_update: z.object({ message: line(2000) }),
@@ -56,6 +61,37 @@ export const capabilityInputs = {
       .max(30)
       .default([]),
   }),
+  // Agent DevOps (ARCHITECTURE.md §7) : le worker exécute, l'agent ne voit jamais une clé.
+  server_exec: z.object({
+    server: serverName,
+    command: line(2000).describe("Commande shell exacte, une seule ligne de préférence."),
+    reason: line(500).describe("Pourquoi cette commande, pour le journal."),
+  }),
+  server_crontab_read: z.object({ server: serverName }),
+  server_run_playbook: z.object({
+    server: serverName,
+    name: z.string().regex(/^[a-z][a-z0-9_-]{0,60}$/),
+    params: z.record(z.string().max(40), z.string().max(200)).default({}),
+  }),
+  submit_change_plan: changePlanSchema,
+  server_git: z.object({
+    server: serverName,
+    operation: z.enum(["pull", "fetch", "clone"]),
+    path: z
+      .string()
+      .regex(/^\/[A-Za-z0-9._/-]{1,200}$/)
+      .describe("Dossier du dépôt sur le serveur (chemin absolu)."),
+    url: z
+      .string()
+      .regex(/^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9._/-]+$/)
+      .optional()
+      .describe("Pour `clone` seulement."),
+  }),
+  server_publish_file: z.object({
+    server: serverName,
+    path: z.string().regex(/^\/[A-Za-z0-9._/-]{1,300}$/),
+    label: line(100).optional(),
+  }),
   // Outils pièges (§7) : déclarés pour que la tentative soit refusée proprement et journalisée.
   merge_pull_request: z.object({ number: z.number().int().optional() }),
   deploy: z.object({ environment: z.string().max(50).optional() }),
@@ -86,6 +122,16 @@ export const capabilityDescriptions: Record<CapabilityName, string> = {
     "Soumet la review : verdict (approve, request_changes, escalate), résumé, statut de chaque critère AC-n (met, partial, missing) et findings (blocker, major, minor, nit) avec fichier et ligne. Une seule fois.",
   submit_build:
     "Termine le développement : résumé du travail, message de commit Conventional Commits, tests ajoutés. Une seule fois.",
+  server_exec:
+    "Exécute tout de suite une commande en lecture sur un serveur (40 par exécution). Une commande qui modifie le serveur est refusée, sauf en D3 hors production : passe par submit_change_plan. Les commandes dangereuses sont toujours refusées.",
+  server_crontab_read: "Lit la crontab de l'utilisateur Jules sur un serveur.",
+  server_run_playbook:
+    "Lance un playbook relu de .jules/playbooks.yml (D2 et plus, hors production). Sinon, inclus-le dans un plan.",
+  submit_change_plan:
+    "Soumet un plan de changement : actions exactes (commandes ou playbooks), impact, vérifications en lecture, retour arrière. L'exécution se termine ; le worker exécutera le plan une fois approuvé. Une seule fois.",
+  server_git:
+    "Opération git sur un serveur : fetch (lecture), pull en fast-forward ou clone (changements). Hooks désactivés.",
+  server_publish_file: "Rend un fichier du serveur téléchargeable dans l'interface.",
   merge_pull_request: "Merge une pull request.",
   deploy: "Déploie dans un environnement.",
   read_secret: "Lit un secret.",
