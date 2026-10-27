@@ -42,7 +42,15 @@ export class FakeGitHub implements GitHubApp {
     number,
     { path: string; line: number | null; body: string }[]
   >();
-  readonly issues: { number: number; repo: string; title: string; body: string }[] = [];
+  readonly issues: {
+    number: number;
+    repo: string;
+    title: string;
+    body: string;
+    labels?: string[];
+    state?: "open" | "closed";
+  }[] = [];
+  readonly sarifs: { repo: string; commitSha: string; ref: string; sarif: string }[] = [];
   /** Règles de branche renvoyées par `getBranchRules`. */
   branchRules: { type: string; parameters?: Record<string, unknown> }[] = [];
   /** Check runs par SHA : ceux de Jules, et ceux de la « CI du projet » posés par les tests. */
@@ -320,10 +328,31 @@ export class FakeGitHub implements GitHubApp {
     return Promise.resolve(this.humanReviewComments.get(reviewId) ?? []);
   }
 
-  createIssue(ref: RepoRef, issue: { title: string; body: string }) {
-    const created = { number: this.#nextId++, repo: `${ref.owner}/${ref.repo}`, ...issue };
+  createIssue(ref: RepoRef, issue: { title: string; body: string; labels?: string[] }) {
+    const created = {
+      number: this.#nextId++,
+      repo: `${ref.owner}/${ref.repo}`,
+      state: "open" as const,
+      ...issue,
+    };
     this.issues.push(created);
     return Promise.resolve({ number: created.number });
+  }
+
+  closeIssue(ref: RepoRef, issueNumber: number) {
+    const issue = this.issues.find(
+      (i) => i.repo === `${ref.owner}/${ref.repo}` && i.number === issueNumber,
+    );
+    if (issue) {
+      issue.state = "closed";
+    }
+    return Promise.resolve();
+  }
+
+  uploadSarif(ref: RepoRef, upload: { commitSha: string; ref: string; sarif: string }) {
+    this.#maybeFail("uploadSarif");
+    this.sarifs.push({ repo: `${ref.owner}/${ref.repo}`, ...upload });
+    return Promise.resolve({ id: `sarif-${this.sarifs.length}` });
   }
 
   findIssueByMarker(ref: RepoRef, marker: string) {

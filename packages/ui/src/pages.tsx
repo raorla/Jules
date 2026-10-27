@@ -28,6 +28,7 @@ import {
 } from "./api.js";
 import { ArtifactCards } from "./artifacts.js";
 import { PendingPlans } from "./devops.js";
+import { OrgSettingsCard } from "./security.js";
 import {
   Card,
   Chip,
@@ -669,6 +670,7 @@ export function SettingsPage({ me }: { me: Me }) {
             </button>
           </div>
         </Card>
+        {me.role === "admin" && <OrgSettingsCard />}
         <Card title={t("settings.theme")}>
           <div className="card-body">
             <div className="seg" role="group" aria-label={t("settings.theme")}>

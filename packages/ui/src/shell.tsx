@@ -14,6 +14,7 @@ import {
   Server as ServerIcon,
   Settings,
   ShieldAlert,
+  ShieldHalf,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -195,6 +196,11 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
             to="/deployments"
             icon={<Rocket aria-hidden="true" />}
             label={t("nav.deployments")}
+          />
+          <NavItem
+            to="/security"
+            icon={<ShieldHalf aria-hidden="true" />}
+            label={t("nav.security")}
           />
           <div className="nav-label">{t("nav.oversight")}</div>
           <NavItem to="/metrics" icon={<BarChart3 aria-hidden="true" />} label={t("nav.metrics")} />

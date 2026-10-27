@@ -9,6 +9,7 @@ import { registerOAuth, type OAuthConfig } from "./oauth.js";
 import { registerPasskeys, type RelyingParty } from "./passkeys.js";
 import { registerDevopsRoutes } from "./devops-routes.js";
 import { registerRoutes } from "./routes.js";
+import { registerSecurityRoutes } from "./security-routes.js";
 
 // api (ARCHITECTURE.md §4.2) : REST `/v1` et SSE pour le web et le desktop, et la SPA servie avec une
 // CSP stricte. Aucun secret d'exécution ici : ni clé de la GitHub App, ni clé API, ni clé SSH.
@@ -71,6 +72,7 @@ export async function buildApi(options: ApiOptions): Promise<FastifyInstance> {
   registerPasskeys(app, { db: options.db, rp });
   registerRoutes(app, { db: options.db, publicOrigin, pool: options.pool });
   registerDevopsRoutes(app, { db: options.db, publicOrigin });
+  registerSecurityRoutes(app, { db: options.db, publicOrigin });
 
   if (options.webDir && existsSync(join(options.webDir, "index.html"))) {
     await app.register(fastifyStatic, { root: options.webDir, wildcard: false });

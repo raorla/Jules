@@ -312,6 +312,8 @@ Après M5, le noyau est déployé en L1 sur 2 ou 3 repos de `MTONGASWARM`. Chaqu
 - L'agent ne reçoit jamais une valeur secrète, même en auditant un serveur rempli de fichiers `.env` (test).
 - Sur un repo public, aucune faille n'est publiée sur GitHub (test).
 
+> Statut (27/10/2026) : code livré. Les quatre critères de la DoD sont des tests automatisés : le cycle complet tourne avec le vrai sandbox (audit d'un repo qui contient lodash 4.17.15, finding `high`, remédiation proposée par l'agent en S1, tâche développeur de type `security` avec H1 et H2, PR livrée par le vrai agent développeur, merge, nouvel audit qui passe le finding en `resolved` et ferme son issue `security`) ; un finding `high` ouvert bloque le pipeline et le playbook `deploy`, jusqu'à ce qu'un humain accepte le risque ; un serveur rempli de `.env` est audité sans qu'aucune valeur n'atteigne l'agent, les findings, l'historique, l'audit ou les journaux (le script n'extrait que des noms, sur le serveur) ; un repo public ne reçoit ni SARIF ni issue, et sa remédiation est refusée. `packages/security` est pur et couvert à 100 %. Écarts assumés : les scanners sont intégrés (secrets de G4.2, OSV de G5.11, règles d'infra Dockerfile et compose) au lieu de Semgrep, gitleaks et Trivy ; `audit_image` répond « pas encore disponible ». Restent, sur l'infrastructure réelle : l'envoi SARIF vers l'onglet Security d'un vrai repo privé.
+
 ### M9 — App desktop, mode connecté (M)
 
 **Livrables**

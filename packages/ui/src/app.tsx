@@ -10,6 +10,7 @@ import { StrictMode } from "react";
 import { api, configureApi, useLiveUpdates, type Me } from "./api.js";
 import { DeploymentsPage, ServerPage, ServersPage } from "./devops.js";
 import { initI18n } from "./i18n.js";
+import { SecurityPage } from "./security.js";
 import {
   ApprovalsPage,
   AuditPage,
@@ -47,6 +48,11 @@ function ServersRoute() {
   return me.data ? <ServersPage me={me.data} /> : null;
 }
 
+function SecurityRoute() {
+  const me = useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/v1/me") });
+  return me.data ? <SecurityPage me={me.data} /> : null;
+}
+
 function SettingsRoute() {
   const me = useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/v1/me") });
   return me.data ? <SettingsPage me={me.data} /> : null;
@@ -76,6 +82,7 @@ const routes = [
     path: "/deployments",
     component: DeploymentsPage,
   }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/security", component: SecurityRoute }),
 ];
 const router = createRouter({ routeTree: rootRoute.addChildren(routes) });
 

@@ -30,6 +30,7 @@
     "@jules/risk": "workspace:*",
     "@jules/sandbox": "workspace:*",
     "@jules/secrets": "workspace:*",
+    "@jules/security": "workspace:*",
     "@jules/ssh": "workspace:*",
     "@jules/workflow": "workspace:*",
     "@opentelemetry/api": "1.9.1",

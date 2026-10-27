@@ -217,6 +217,78 @@ test.describe("DevOps (M7)", () => {
   });
 });
 
+test.describe("Sécurité (M8)", () => {
+  test("la page Sécurité montre les findings actifs, leurs cibles et l'analyse de l'agent", async ({
+    page,
+    request,
+  }) => {
+    await loginAs(page, request, "root");
+    await page.getByRole("link", { name: "Sécurité" }).click();
+    await expect(page.locator(".kpi.dominant")).toContainText("2");
+    const lodash = page.locator(".row", { hasText: "GHSA-p6mc-m468-83gw" });
+    await expect(lodash).toContainText("haut");
+    await expect(lodash).toContainText("repo · acme/factures");
+    await expect(lodash).toContainText("Exploitable : les factures fusionnent");
+    await expect(page.locator(".row", { hasText: "/srv/app/.env" })).toContainText(
+      "échéance dépassée",
+    );
+    await expect(page.getByText("Secret dans le code")).toHaveCount(0);
+    await page.getByRole("button", { name: "Résolus" }).click();
+    await expect(page.getByText("Secret dans le code : jeton GitHub")).toBeVisible();
+  });
+
+  test("accepter un risque exige une passkey et une échéance", async ({ page, request }) => {
+    await addVirtualAuthenticator(page);
+    await loginAs(page, request, "root");
+    await page.getByRole("link", { name: "Réglages" }).click();
+    await page.getByRole("button", { name: "Ajouter une passkey" }).click();
+    await page.getByRole("link", { name: "Sécurité" }).click();
+    const lodash = page.locator(".row", { hasText: "GHSA-p6mc-m468-83gw" });
+    await lodash.getByLabel("Justification").fill("Correctif planifié, WAF en place");
+    await expect(lodash.getByRole("button", { name: "Accepter le risque" })).toBeDisabled();
+    // Moins d'un an : au-delà, l'api refuse l'échéance.
+    const inTwoMonths = new Date(Date.now() + 60 * 86_400_000).toISOString().slice(0, 10);
+    await lodash.getByLabel("Jusqu'au").fill(inTwoMonths);
+    await lodash.getByRole("button", { name: "Accepter le risque" }).click();
+    await page.getByRole("button", { name: "Utiliser ma passkey" }).click();
+    await expect(
+      page.getByRole("status").filter({ hasText: "Décision enregistrée." }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Tous" }).click();
+    await expect(page.locator(".row", { hasText: "GHSA-p6mc-m468-83gw" })).toContainText(
+      "risque accepté",
+    );
+  });
+
+  test("confirmer un faux positif suffit d'une justification, sans passkey", async ({
+    page,
+    request,
+  }) => {
+    await loginAs(page, request, "root");
+    await page.getByRole("link", { name: "Sécurité" }).click();
+    const row = page.locator(".row", { hasText: "Option quatre yeux désactivée" });
+    await expect(row).toContainText("faux positif proposé");
+    await row.getByLabel("Justification").fill("Une seule personne en production");
+    await row.getByRole("button", { name: "Confirmer le faux positif" }).click();
+    await expect(page.getByRole("dialog")).toBeHidden();
+    await page.getByRole("button", { name: "Tous" }).click();
+    await expect(page.locator(".row", { hasText: "Option quatre yeux désactivée" })).toContainText(
+      "faux positif",
+    );
+  });
+
+  test("un audit se demande depuis l'interface et le worker l'exécute", async ({
+    page,
+    request,
+  }) => {
+    await loginAs(page, request, "root");
+    await page.getByRole("link", { name: "Sécurité" }).click();
+    await page.getByLabel("Cible").selectOption({ label: "Auditer Jules" });
+    await page.getByRole("button", { name: "Lancer un audit" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Audit demandé" })).toBeVisible();
+  });
+});
+
 test.describe("sécurité de l'interface", () => {
   test("un artefact qui contient du HTML ou du JavaScript ne l'exécute pas (XSS)", async ({
     page,

@@ -11,7 +11,8 @@
     "settings": "Settings",
     "operations": "Operations",
     "servers": "Servers",
-    "deployments": "Deployments"
+    "deployments": "Deployments",
+    "security": "Security"
   },
   "top": {
     "search": "Search a task…",
@@ -164,7 +165,8 @@
     "failed": "failed",
     "diagnosing": "diagnosing",
     "awaiting_plan_approval": "plan to approve",
-    "executing": "running the plan"
+    "executing": "running the plan",
+    "auditing": "auditing"
   },
   "risk": {
     "low": "low risk",
@@ -217,7 +219,14 @@
     "skipped": "skipped",
     "read": "read",
     "change": "change",
-    "dangerous": "dangerous"
+    "dangerous": "dangerous",
+    "triaged": "triaged",
+    "in_remediation": "in remediation",
+    "resolved": "resolved",
+    "accepted_risk": "risk accepted",
+    "false_positive": "false positive",
+    "open": "open",
+    "requested": "requested"
   },
   "artifact": {
     "triage": "Triage",
@@ -315,5 +324,61 @@
   "notify": {
     "approval": "An approval is waiting for you.",
     "enable": "Enable notifications"
+  },
+  "security": {
+    "title": "Security",
+    "open_serious": "Open critical and high",
+    "overdue": "Overdue",
+    "reopened": "Reopened",
+    "fix_time": "Time to fix (high)",
+    "days": "{{value}} d",
+    "findings": "Findings",
+    "active": "Active",
+    "all": "All",
+    "resolved": "Resolved",
+    "due": "due",
+    "overdue_chip": "overdue",
+    "until": "accepted until",
+    "analysis": "Agent analysis",
+    "fp_suggested": "false positive suggested",
+    "remediation": "Remediation",
+    "accept": "Accept the risk",
+    "accept_help": "Passkey required; the finding reopens at the end date.",
+    "false_positive": "Confirm false positive",
+    "reopen": "Reopen",
+    "note": "Reason",
+    "until_label": "Until",
+    "decided": "Decision recorded.",
+    "audit": "Run an audit",
+    "audit_platform": "Audit Jules",
+    "audit_sent": "Audit requested: the worker runs it.",
+    "audits": "Recent audits",
+    "empty": "No findings",
+    "empty_sub": "open.",
+    "empty_text": "Scheduled audits, merges and on-demand audits feed this list.",
+    "target": "Target",
+    "active_count": "{{count}} active"
+  },
+  "severity": {
+    "critical": "critical",
+    "high": "high",
+    "medium": "medium",
+    "low": "low"
+  },
+  "scope": {
+    "repo": "repo",
+    "server": "server",
+    "platform": "platform",
+    "image": "image"
+  },
+  "org": {
+    "title": "Organisation",
+    "four_eyes": "Four eyes in production",
+    "four_eyes_help": "The approver of a production plan must be someone other than the requester.",
+    "github_prod": "Production approval from GitHub",
+    "github_prod_help": "Off by default: a comment cannot ask for a passkey.",
+    "security_level": "Security agent",
+    "on": "On",
+    "off": "Off"
   }
 }

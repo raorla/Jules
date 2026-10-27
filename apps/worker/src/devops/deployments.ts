@@ -28,6 +28,7 @@ import type { Logger } from "pino";
 import { isStopped } from "../controls.js";
 import { enqueueEffect } from "../outbox.js";
 import type { PlanOutcome, PlanRow, PlanService } from "./plans.js";
+import { blockingFindings } from "../security/audits.js";
 import { hostKeyTrusted, type ServerService } from "./servers.js";
 
 // Pipeline de déploiement (WORKFLOW.md §12.2) : PR mergée → CI verte → staging → vérification →
@@ -298,6 +299,10 @@ export class DeploymentService {
       .filter((s) => s.phase !== "verify")
       .map((s) => classify(s.command, { inPlaybook: true }).class)
       .reduce<"read" | "change" | "dangerous">((a, c) => (rank[c] > rank[a] ? c : a), "read");
+    // Un finding critique ou haut ouvert sur le repo ou le serveur bloque `deploy*` (WORKFLOW.md §13.2).
+    const blocking = target.playbook.startsWith("deploy")
+      ? await blockingFindings(db, d.orgId, { repoId: d.repoId, serverId: server.id })
+      : [];
     const decision = decide({
       action: "server_action",
       level: server.level,
@@ -307,10 +312,17 @@ export class DeploymentService {
       via: "direct",
       hostKeyTrusted: true,
       frozen: server.frozen,
+      deployBlocked: blocking.length > 0,
       controls: { stopped: await isStopped(db, d.orgId, { repoId: d.repoId }) },
     });
     if (decision.effect === "deny") {
-      await this.#block(d, decision.reason);
+      const first = blocking[0];
+      await this.#block(
+        d,
+        first
+          ? `${decision.reason} : ${first.severity} « ${first.title} » (${first.component})`
+          : decision.reason,
+      );
       return false;
     }
     // La production passe toujours par une approbation humaine avec passkey (policy).

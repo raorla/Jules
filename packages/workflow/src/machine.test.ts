@@ -367,3 +367,20 @@ describe("agent DevOps (WORKFLOW.md §12)", () => {
     expect(transition(devops("diagnosing"), { type: "build_submitted" }).ok).toBe(false);
   });
 });
+
+describe("agent Sécurité (WORKFLOW.md §13)", () => {
+  const security = (state: TaskState) => ctx(state, { agent: "security" });
+
+  it("audite, peut poser des questions, puis rend son rapport", () => {
+    expect(next(security("received"), { type: "start" }).next).toBe("auditing");
+    expect(RUNNABLE_STATES.auditing).toBe("security");
+    expect(next(security("auditing"), { type: "questions_asked" })).toMatchObject({
+      next: "awaiting_info",
+      patch: { resumeState: "auditing" },
+    });
+    expect(next(security("auditing"), { type: "audit_reported" }).next).toBe("done");
+    expect(
+      transition(security("auditing"), { type: "plan_submitted", approvalRequired: true }).ok,
+    ).toBe(false);
+  });
+});

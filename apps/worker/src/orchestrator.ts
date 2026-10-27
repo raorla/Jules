@@ -34,6 +34,7 @@ import {
   lessons,
   repos,
   runs,
+  findings,
   servers,
   sql,
   tasks,
@@ -55,6 +56,7 @@ import { ALWAYS_DENIED_CAPABILITIES, ROLE_CAPABILITIES, decide } from "@jules/po
 import { parsePlaybooks, type Playbook } from "@jules/devops";
 import type { PlanService } from "./devops/plans.js";
 import type { ServerService } from "./devops/servers.js";
+import type { AuditService } from "./security/audits.js";
 import { computeRisk, estimateRisk } from "@jules/risk";
 import { renderReport, verdict } from "@jules/gates";
 import type { SandboxDriver } from "@jules/sandbox";
@@ -91,7 +93,8 @@ export type AgentRole =
   | "reviewer"
   | "security_reviewer"
   | "learner"
-  | "devops";
+  | "devops"
+  | "security";
 
 /** Ce qui distingue les rôles (ARCHITECTURE.md §6.1). */
 const ROLE_SPECS: Record<
@@ -133,6 +136,13 @@ const ROLE_SPECS: Record<
   // Le learner n'a ni outil intégré ni workspace : il ne lit que ce que les humains ont dit et fait.
   learner: { tools: [], workspace: "none", submits: "lessons", effort: "low" },
   // DevOps (§6.2) : aucun outil d'édition, le repo en lecture seule pour le contexte.
+  // Sécurité (§6.3) : audite sans rien modifier, le repo en lecture seule.
+  security: {
+    tools: ["Read", "Glob", "Grep"],
+    workspace: "ro",
+    submits: "audit_report",
+    effort: "high",
+  },
   devops: {
     tools: ["Read", "Glob", "Grep"],
     workspace: "ro",
@@ -155,6 +165,8 @@ export type OrchestratorDeps = {
   masker: Masker;
   /** Accès aux serveurs et plans, pour l'agent DevOps (M7). */
   devops?: { servers: ServerService; plans: PlanService };
+  /** Audits et findings, pour l'agent Sécurité (M8). */
+  security?: { audits: AuditService };
   config: {
     runsDir: string;
     promptsDir: string;
@@ -246,7 +258,9 @@ export class Orchestrator {
       where id = (
         select t.id from tasks t
         where not t.paused
-          and t.issue_number is not null
+          -- Une tâche développeur attend son issue ; une demande DevOps issue d'un finding de serveur
+          -- n'en a pas : la faille ne doit pas apparaître sur GitHub.
+          and (t.issue_number is not null or t.agent <> 'developer')
           and (t.lease_until is null or t.lease_until < now())
           and (
             t.state = 'received'
@@ -723,6 +737,9 @@ export class Orchestrator {
           ...(role === "devops"
             ? { devops: await this.#devopsContext(task.orgId, playbooks) }
             : {}),
+          ...(role === "security"
+            ? { devops: await this.#securityContext(task.orgId, task.repoId) }
+            : {}),
           ...(spec.submits === "review" && task.baseSha
             ? {
                 diff: await git(
@@ -744,8 +761,11 @@ export class Orchestrator {
           log: runLog,
           masker: this.#deps.masker,
           model: config.model,
-          ...(role === "devops" && this.#deps.devops
+          ...((role === "devops" || role === "security") && this.#deps.devops
             ? { devops: { ...this.#deps.devops, playbooks } }
+            : {}),
+          ...(role === "security" && this.#deps.security
+            ? { security: { audits: this.#deps.security.audits, masker: this.#deps.masker } }
             : {}),
           onBudgetExceeded: (id) => {
             runLog.warn("budget atteint : arrêt du sandbox");
@@ -918,6 +938,22 @@ export class Orchestrator {
           type: "design_submitted",
           adrPlanned: (submitted.content as Design).adr !== undefined,
         });
+      } else if (role === "security") {
+        // Le rapport de l'agent clôt la tâche ; les findings sont déjà en base.
+        if (runStatus === "succeeded" && result?.text) {
+          await this.#apply(task, { type: "audit_reported" }, {}, async (tx) => {
+            await tx.insert(artifacts).values({
+              orgId: task.orgId,
+              taskId: task.id,
+              runId: run.id,
+              kind: "audit_report",
+              version: 1,
+              content: { text: this.#deps.masker.mask(result.text ?? "") },
+            });
+          });
+        } else {
+          await this.#apply(task, { type: "run_without_result" });
+        }
       } else if (role === "devops") {
         if (submitted?.kind === "change_plan") {
           const content = submitted.content as { approvalRequired: boolean };
@@ -1103,6 +1139,56 @@ export class Orchestrator {
   }
 
   /** Message de l'exécution : la demande et tout ce qui la précède, encadrés comme des données (§15). */
+  /** Serveurs auditables et findings actifs du repo, pour l'agent Sécurité. */
+  async #securityContext(orgId: string, repoId: string): Promise<string> {
+    const { db } = this.#deps;
+    const serverRows = await db
+      .select({
+        name: servers.name,
+        environment: servers.environment,
+        hostKeyStatus: servers.hostKeyStatus,
+      })
+      .from(servers)
+      .where(eq(servers.orgId, orgId))
+      .orderBy(asc(servers.name));
+    const active = await db
+      .select({
+        id: findings.id,
+        severity: findings.severity,
+        status: findings.status,
+        title: findings.title,
+        component: findings.component,
+      })
+      .from(findings)
+      .where(
+        and(
+          eq(findings.orgId, orgId),
+          eq(findings.targetId, repoId),
+          inArray(findings.status, ["open", "triaged", "in_remediation"]),
+        ),
+      )
+      .limit(50);
+    return [
+      "# Serveurs",
+      "",
+      ...(serverRows.length === 0
+        ? ["Aucun serveur."]
+        : serverRows.map(
+            (r) =>
+              `- \`${r.name}\` : ${r.environment}${r.hostKeyStatus === "trusted" ? "" : " (clé d'hôte non validée)"}`,
+          )),
+      "",
+      "# Findings actifs de ce repo",
+      "",
+      ...(active.length === 0
+        ? ["Aucun."]
+        : active.map(
+            (f) =>
+              `- [${f.id.slice(0, 8)}] ${f.severity} · ${f.status} · ${f.title} (${f.component})`,
+          )),
+    ].join("\n");
+  }
+
   /** Serveurs et playbooks que l'agent DevOps peut viser (sans adresse ni clé : il n'en a pas besoin). */
   async #devopsContext(orgId: string, playbooks: Record<string, Playbook>): Promise<string> {
     const rows = await this.#deps.db

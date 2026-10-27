@@ -68,6 +68,9 @@ importers:
       '@jules/metrics':
         specifier: workspace:*
         version: link:../../packages/metrics
+      '@jules/security':
+        specifier: workspace:*
+        version: link:../../packages/security
       '@simplewebauthn/server':
         specifier: 14.0.3
         version: 14.0.3
@@ -236,6 +239,9 @@ importers:
       '@jules/secrets':
         specifier: workspace:*
         version: link:../../packages/secrets
+      '@jules/security':
+        specifier: workspace:*
+        version: link:../../packages/security
       '@jules/ssh':
         specifier: workspace:*
         version: link:../../packages/ssh
@@ -590,6 +596,28 @@ importers:
       '@types/node':
         specifier: 24.19.2
         version: 24.19.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 5.0.5
+        version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@24.19.2)(@vitest/coverage-v8@5.0.5)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/security:
+    dependencies:
+      '@jules/gates':
+        specifier: workspace:*
+        version: link:../gates
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@types/node':
+        specifier: 24.19.2
+        version: 24.19.2
+      '@vitest/coverage-v8':
+        specifier: 5.0.5
+        version: 5.0.5(vitest@5.0.5)
       typescript:
         specifier: 6.0.3
         version: 6.0.3

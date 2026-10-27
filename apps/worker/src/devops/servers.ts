@@ -44,12 +44,14 @@ export function hostKeyTrusted(server: ServerRow): boolean {
 }
 
 export type ExecMeta = {
-  source: "agent" | "plan" | "deployment";
+  source: "agent" | "plan" | "deployment" | "audit";
   runId?: string;
   planId?: string;
   commandClass: CommandClass;
   decision: Decision;
   timeoutSec?: number;
+  /** `false` : la sortie n'est pas gardée dans l'historique (audit de sécurité, défense en profondeur). */
+  keepOutput?: boolean;
 };
 
 export class ServerService {
@@ -143,7 +145,7 @@ export class ServerService {
         exitCode: result.exitCode,
         timedOut: result.timedOut,
         durationMs: result.durationMs,
-        output,
+        output: meta.keepOutput === false ? "sortie non conservée (audit de sécurité)" : output,
       })
       .returning({ id: serverCommands.id });
     await appendAudit(db, {

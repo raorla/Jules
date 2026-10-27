@@ -6,6 +6,7 @@ import { z } from "zod";
 import { activeTask, storeHumanInput, type Apply } from "./conversation.js";
 import type { WorkerDeps } from "./deps.js";
 import { requestDeployment } from "./devops/deployments.js";
+import { requestRepoAuditOnMerge } from "./security/audits.js";
 import { upsertUser } from "./identities.js";
 import { applyTransition } from "./transitions.js";
 
@@ -147,10 +148,12 @@ export function preparePullRequestClosed(event: EventRow): Apply {
             mergedAt: p.pull_request.merged_at ? new Date(p.pull_request.merged_at) : new Date(),
           })
         : false;
+    const audited =
+      merged && onDefault ? await requestRepoAuditOnMerge(tx, p.repository.id) : false;
     const task = await activeTask(tx, p.repository.id, p.pull_request.number, true);
     if (!task) {
-      return deploying
-        ? { status: "processed", reason: "deployment_requested" }
+      return deploying || audited
+        ? { status: "processed", reason: deploying ? "deployment_requested" : "audit_requested" }
         : { status: "ignored", reason: "no_task_for_pull_request" };
     }
     await tx

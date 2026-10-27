@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import { App, Octokit } from "octokit";
 import type { AppInfo } from "./app-setup.js";
 
@@ -71,7 +72,16 @@ export interface GitHubApp {
     ref: RepoRef,
     branch: string,
   ): Promise<{ type: string; parameters?: Record<string, unknown> }[]>;
-  createIssue(ref: RepoRef, issue: { title: string; body: string }): Promise<{ number: number }>;
+  createIssue(
+    ref: RepoRef,
+    issue: { title: string; body: string; labels?: string[] },
+  ): Promise<{ number: number }>;
+  closeIssue(ref: RepoRef, issueNumber: number): Promise<void>;
+  /** Failles du code en SARIF dans l'onglet Security (permission `security_events`, repos privés). */
+  uploadSarif(
+    ref: RepoRef,
+    upload: { commitSha: string; ref: string; sarif: string },
+  ): Promise<{ id: string }>;
   /** Issue récente de l'App qui contient `marker` (création idempotente après un crash). */
   findIssueByMarker(ref: RepoRef, marker: string): Promise<{ number: number } | undefined>;
   /** Check runs d'un commit (la CI du projet, et ceux de Jules). */
@@ -291,7 +301,7 @@ export class OctokitGitHubApp implements GitHubApp {
 
   async createIssue(
     ref: RepoRef,
-    issue: { title: string; body: string },
+    issue: { title: string; body: string; labels?: string[] },
   ): Promise<{ number: number }> {
     const octokit = await this.#installation(ref, { issues: "write" });
     const { data } = await octokit.rest.issues.create({
@@ -299,8 +309,37 @@ export class OctokitGitHubApp implements GitHubApp {
       repo: ref.repo,
       title: issue.title,
       body: issue.body,
+      ...(issue.labels ? { labels: issue.labels } : {}),
     });
     return { number: data.number };
+  }
+
+  async closeIssue(ref: RepoRef, issueNumber: number): Promise<void> {
+    const octokit = await this.#installation(ref, { issues: "write" });
+    await octokit.rest.issues.update({
+      owner: ref.owner,
+      repo: ref.repo,
+      issue_number: issueNumber,
+      state: "closed",
+      state_reason: "completed",
+    });
+  }
+
+  async uploadSarif(
+    ref: RepoRef,
+    upload: { commitSha: string; ref: string; sarif: string },
+  ): Promise<{ id: string }> {
+    const octokit = await this.#installation(ref, { security_events: "write" });
+    const { data } = await octokit.rest.codeScanning.uploadSarif({
+      owner: ref.owner,
+      repo: ref.repo,
+      commit_sha: upload.commitSha,
+      ref: upload.ref,
+      // GitHub attend le SARIF compressé (gzip) puis encodé en base64.
+      sarif: gzipSync(upload.sarif).toString("base64"),
+      tool_name: "Jules",
+    });
+    return { id: data.id ?? "" };
   }
 
   async findIssueByMarker(ref: RepoRef, marker: string): Promise<{ number: number } | undefined> {

@@ -6,6 +6,7 @@ import type { Logger } from "pino";
 import { isStopped } from "../controls.js";
 import { handleCapability } from "./capabilities.js";
 import { truncate, type Masker } from "./masking.js";
+import type { SecurityTools } from "./security-tools.js";
 import type { DevopsTools } from "./server-tools.js";
 import { anthropicError, forwardToModel } from "./model-proxy.js";
 import { bearer, hashRunToken } from "./tokens.js";
@@ -25,6 +26,8 @@ export type BrokerDeps = {
   onProviderOutage?: (runId: string) => void;
   /** Outils serveur, pour une exécution de l'agent DevOps seulement. */
   devops?: DevopsTools;
+  /** Audits et findings, pour une exécution de l'agent Sécurité seulement. */
+  security?: SecurityTools;
 };
 
 /** Erreurs consécutives du fournisseur au-delà desquelles l'exécution est suspendue (§17). */
@@ -98,6 +101,7 @@ export async function startBroker(
               role: auth.run.role as Role,
               stopped,
               ...(deps.devops ? { devops: deps.devops } : {}),
+              ...(deps.security ? { security: deps.security } : {}),
             },
             request.params.name,
             input,

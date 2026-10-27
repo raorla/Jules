@@ -8,6 +8,7 @@ import { drainOutbox } from "./outbox.js";
 import type { DeploymentService } from "./devops/deployments.js";
 import type { PlanService } from "./devops/plans.js";
 import type { ServerService } from "./devops/servers.js";
+import type { AuditService } from "./security/audits.js";
 import type { Orchestrator } from "./orchestrator.js";
 import { purgeExpired } from "./retention.js";
 import { drainSecretSubmissions } from "./sealed-secrets.js";
@@ -27,6 +28,8 @@ export type WorkerOptions = {
   secrets?: SecretStore;
   /** Agent DevOps (M7) : clés d'hôte, plans approuvés, pipeline de déploiement. */
   devops?: { servers: ServerService; plans: PlanService; deployments: DeploymentService };
+  /** Agent Sécurité (M8) : audits planifiés, demandés ou déclenchés par un merge. */
+  security?: { audits: AuditService };
   pollMs?: number;
   reconcileEveryMs?: number;
   reconcileLookbackMs?: number;
@@ -39,13 +42,13 @@ export class AppSetupError extends Error {
   }
 }
 
-type LoopName = "events" | "outbox" | "tasks" | "commands" | "devops";
+type LoopName = "events" | "outbox" | "tasks" | "commands" | "devops" | "security";
 type Loop = { running: boolean; again: boolean; run: () => Promise<number> };
 
 export class Worker {
   readonly #deps: WorkerDeps;
   readonly #options: Required<
-    Omit<WorkerOptions, "orchestrator" | "runsDir" | "secrets" | "devops">
+    Omit<WorkerOptions, "orchestrator" | "runsDir" | "secrets" | "devops" | "security">
   >;
   readonly #devops: WorkerOptions["devops"];
   readonly #runsDir: string | undefined;
@@ -57,7 +60,8 @@ export class Worker {
 
   constructor(deps: WorkerDeps, options: WorkerOptions) {
     this.#deps = deps;
-    const { orchestrator, runsDir, secrets, devops, ...rest } = options;
+    const { orchestrator, runsDir, secrets, devops, security, ...rest } = options;
+    let lastSchedule = 0;
     this.#runsDir = runsDir;
     this.#devops = devops;
     this.#options = {
@@ -93,6 +97,23 @@ export class Worker {
               (await devops.plans.drain())
             : 0,
       },
+      security: {
+        running: false,
+        again: false,
+        run: async () => {
+          if (!security) {
+            return 0;
+          }
+          // Planification et échéances : toutes les dix minutes suffisent.
+          let count = 0;
+          if (Date.now() - lastSchedule > 600_000) {
+            lastSchedule = Date.now();
+            count +=
+              (await security.audits.schedule()) + (await security.audits.expireAcceptedRisks());
+          }
+          return count + (await security.audits.drain());
+        },
+      },
     };
   }
 
@@ -113,6 +134,7 @@ export class Worker {
     this.#kick("tasks");
     this.#kick("commands");
     this.#kick("devops");
+    this.#kick("security");
     this.#timers.push(
       setInterval(() => {
         this.#kick("events");
@@ -120,6 +142,7 @@ export class Worker {
         this.#kick("tasks");
         this.#kick("commands");
         this.#kick("devops");
+        this.#kick("security");
       }, this.#options.pollMs),
       setInterval(() => void this.#recover(), 60_000),
       setInterval(() => void this.#purge(), 3600_000),

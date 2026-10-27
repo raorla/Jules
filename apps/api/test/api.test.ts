@@ -5,6 +5,7 @@ import {
   changePlans,
   commands,
   eq,
+  findings,
   installations,
   memberships,
   repos,
@@ -539,10 +540,85 @@ describe("DevOps (M7)", () => {
     expect((await call(admin, "GET", "/v1/settings/org")).json()).toEqual({
       fourEyes: false,
       githubProductionApproval: false,
+      securityLevel: "S0",
     });
     expect((await call(admin, "GET", "/v1/dora?days=30")).json()).toMatchObject({
       days: 30,
       deploymentsPerWeek: 0,
     });
+  });
+});
+
+describe("Sécurité (M8)", () => {
+  it("exige une passkey et une échéance pour accepter un risque, pas pour un faux positif", async () => {
+    await addMember("sec-maint", "maintainer");
+    const maintainer = (await login("sec-maint"))!;
+    const insert = async (title: string) => {
+      const [row] = await t.db
+        .insert(findings)
+        .values({
+          orgId: DEFAULT_ORG_ID,
+          scope: "platform",
+          targetId: DEFAULT_ORG_ID,
+          key: `platform|${title}`,
+          category: "platform",
+          component: "réglages",
+          title,
+          severity: "high",
+          scanner: "platform-audit",
+          evidence: "test",
+        })
+        .returning();
+      return row!;
+    };
+    const risky = await insert("Risque");
+    const until = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    const refused = await call(maintainer, "POST", `/v1/findings/${risky.id}/decision`, {
+      decision: "accept_risk",
+      until,
+      note: "compensé par le WAF",
+    });
+    expect(refused.json()).toMatchObject({ stepUp: true });
+    const authenticator = new SoftAuthenticator("jules.test", PUBLIC_URL);
+    await registerPasskey(maintainer, authenticator);
+    await stepUp(maintainer, authenticator);
+    const tooLate = await call(maintainer, "POST", `/v1/findings/${risky.id}/decision`, {
+      decision: "accept_risk",
+      until: new Date(Date.now() + 400 * 86_400_000).toISOString(),
+      note: "compensé par le WAF",
+    });
+    expect(tooLate.statusCode).toBe(400);
+    const accepted = await call(maintainer, "POST", `/v1/findings/${risky.id}/decision`, {
+      decision: "accept_risk",
+      until,
+      note: "compensé par le WAF",
+    });
+    expect(accepted.json()).toEqual({ ok: true, status: "accepted_risk" });
+
+    const noisy = await insert("Bruit");
+    const fp = await call(maintainer, "POST", `/v1/findings/${noisy.id}/decision`, {
+      decision: "false_positive",
+      note: "code mort",
+    });
+    expect(fp.json()).toEqual({ ok: true, status: "false_positive" });
+    expect(
+      (
+        await call(maintainer, "POST", `/v1/findings/${noisy.id}/decision`, {
+          decision: "false_positive",
+          note: "encore",
+        })
+      ).statusCode,
+    ).toBe(409);
+
+    const listed = (await call(maintainer, "GET", "/v1/findings")).json<
+      { title: string; target: string }[]
+    >();
+    expect(listed.find((f) => f.title === "Risque")?.target).toBe("Jules");
+    expect((await call(maintainer, "GET", "/v1/security/metrics")).json()).toMatchObject({
+      openBySeverity: { high: 0 },
+    });
+    const audit = await call(maintainer, "POST", "/v1/audits", { scope: "platform" });
+    expect(audit.statusCode).toBe(202);
+    expect((await call(maintainer, "POST", "/v1/audits", { scope: "repo" })).statusCode).toBe(400);
   });
 });

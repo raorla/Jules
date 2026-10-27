@@ -3,9 +3,12 @@ import {
   and,
   artifacts,
   asc,
+  audits,
   deployments,
   desc,
   eq,
+  findings,
+  inArray,
   installations,
   outbox,
   repos,
@@ -29,6 +32,7 @@ import {
   renderRepoConfig,
   type RepoFiles,
 } from "./setup.js";
+import { toSarif, type FindingInput } from "@jules/security";
 import { z } from "zod";
 import type { WorkerDeps } from "./deps.js";
 import { gateG6, reviewSchema, type Review, type Spec } from "@jules/artifacts";
@@ -83,6 +87,8 @@ const effectPayloads = {
     state: z.enum(["queued", "in_progress", "success", "failure", "error"]),
     description: z.string().max(140),
   }),
+  "github.sarif": z.object({ auditId: z.uuid() }),
+  "github.security_issue": z.object({ findingId: z.uuid(), action: z.enum(["open", "close"]) }),
   "github.reply": z.object({
     installationId: z.number(),
     owner: z.string(),
@@ -212,6 +218,14 @@ async function latestArtifact(db: Db, taskId: string, kind: string) {
 const executors: Record<EffectKind, Executor> = {
   "github.status_comment": async ({ db, github, settings }, row) => {
     const { taskId } = effectPayloads["github.status_comment"].parse(row.payload);
+    const [withoutIssue] = await db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(and(eq(tasks.id, taskId), sql`${tasks.issueNumber} is null`));
+    if (withoutIssue) {
+      // Tâche sans issue (remédiation d'un serveur) : son statut ne vit que dans l'interface.
+      return { skipped: "tâche sans issue" };
+    }
     const { task, ref, issueNumber } = await loadTask(db, taskId);
     const plan = (await latestArtifact(db, taskId, "plan")) as { steps: string[] } | undefined;
     const questions = (await latestArtifact(db, taskId, "questions")) as
@@ -343,6 +357,104 @@ const executors: Record<EffectKind, Executor> = {
       description: p.description,
     });
     return { state: p.state };
+  },
+
+  // Failles du code d'un repo privé : SARIF dans l'onglet Security (WORKFLOW.md §13.2).
+  "github.sarif": async ({ db, github }, row) => {
+    const { auditId } = effectPayloads["github.sarif"].parse(row.payload);
+    const [found] = await db
+      .select({ audit: audits, repo: repos, installation: installations })
+      .from(audits)
+      .innerJoin(repos, sql`${repos.id}::text = ${audits.targetId}`)
+      .innerJoin(installations, eq(installations.id, repos.installationId))
+      .where(eq(audits.id, auditId));
+    if (!found?.audit.commitSha) {
+      throw new Error(`audit ${auditId} introuvable ou sans commit`);
+    }
+    // Revérifié au moment de publier : un repo devenu public ne reçoit rien.
+    if (!found.repo.private) {
+      return { skipped: "repo public" };
+    }
+    const active = await db
+      .select()
+      .from(findings)
+      .where(
+        and(
+          eq(findings.scope, "repo"),
+          eq(findings.targetId, found.repo.id),
+          inArray(findings.status, ["open", "triaged", "in_remediation"]),
+        ),
+      );
+    const [owner, name] = found.repo.fullName.split("/") as [string, string];
+    const upload = await github.uploadSarif(
+      { installationId: found.installation.githubInstallationId, owner, repo: name },
+      {
+        commitSha: found.audit.commitSha,
+        ref: `refs/heads/${found.repo.defaultBranch ?? "main"}`,
+        sarif: JSON.stringify(
+          toSarif(
+            active.map((f) => ({
+              ...f,
+              category: f.category as FindingInput["category"],
+              details: {},
+            })),
+          ),
+        ),
+      },
+    );
+    return { sarifId: upload.id, results: active.length };
+  },
+
+  // Issue `security` d'une faille critique ou haute d'un repo privé, fermée à la résolution.
+  "github.security_issue": async ({ db, github }, row) => {
+    const p = effectPayloads["github.security_issue"].parse(row.payload);
+    const [found] = await db
+      .select({ finding: findings, repo: repos, installation: installations })
+      .from(findings)
+      .innerJoin(repos, sql`${repos.id}::text = ${findings.targetId}`)
+      .innerJoin(installations, eq(installations.id, repos.installationId))
+      .where(and(eq(findings.id, p.findingId), eq(findings.scope, "repo")));
+    if (!found) {
+      throw new Error(`finding ${p.findingId} introuvable`);
+    }
+    if (!found.repo.private) {
+      return { skipped: "repo public" };
+    }
+    const [owner, name] = found.repo.fullName.split("/") as [string, string];
+    const ref: RepoRef = {
+      installationId: found.installation.githubInstallationId,
+      owner,
+      repo: name,
+    };
+    const f = found.finding;
+    if (p.action === "close") {
+      if (f.githubIssueNumber !== null) {
+        await github.closeIssue(ref, f.githubIssueNumber);
+      }
+      return { closed: f.githubIssueNumber };
+    }
+    if (f.githubIssueNumber !== null) {
+      return { issueNumber: f.githubIssueNumber, operation: "existing" };
+    }
+    const marker = `<!-- jules:finding id=${f.id} -->`;
+    const existing = await github.findIssueByMarker(ref, marker);
+    const issue =
+      existing ??
+      (await github.createIssue(ref, {
+        title: `Sécurité (${f.severity}) : ${f.title}`.slice(0, 200),
+        body: [
+          marker,
+          `**Sévérité** : \`${f.severity}\` · **Composant** : \`${f.component.replaceAll("`", "'")}\``,
+          f.dueAt ? `**Échéance** : ${f.dueAt.toISOString().slice(0, 10)}` : "",
+          "",
+          f.evidence.replaceAll("@", "@\u200b"),
+          "",
+          "Trouvé par l'audit de sécurité de Jules. Cette issue se ferme quand un nouvel audit ne le retrouve plus.",
+        ].join("\n"),
+        labels: ["security"],
+      }));
+    await db.update(findings).set({ githubIssueNumber: issue.number }).where(eq(findings.id, f.id));
+    return { issueNumber: issue.number, operation: existing ? "found" : "created" };
   },
 
   "github.reply": async ({ github }, row) => {

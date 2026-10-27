@@ -28,6 +28,7 @@ export type TaskState =
   | "diagnosing"
   | "awaiting_plan_approval"
   | "executing"
+  | "auditing"
   | "done"
   | "waiting_provider"
   | "blocked"
@@ -201,6 +202,51 @@ export type Dora = {
   timeToRestoreHours: number | null;
   approvalsPerDay: number;
 };
+export type Severity = "critical" | "high" | "medium" | "low";
+export type Finding = {
+  id: string;
+  scope: "repo" | "server" | "platform" | "image";
+  target: string;
+  targetId: string;
+  category: string;
+  component: string;
+  title: string;
+  severity: Severity;
+  status: "open" | "triaged" | "in_remediation" | "resolved" | "accepted_risk" | "false_positive";
+  scanner: string;
+  evidence: string;
+  analysis: string | null;
+  falsePositiveSuggested: boolean;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  dueAt: string | null;
+  acceptedUntil: string | null;
+  reopenCount: number;
+  remediationTaskId: string | null;
+};
+export type SecurityMetrics = {
+  openBySeverity: Record<Severity, number>;
+  openByScope: Record<string, number>;
+  overdueShare: number | null;
+  meanDaysToFix: Record<Severity, number | null>;
+  reopened: number;
+  falsePositiveRate: Record<string, number>;
+};
+export type AuditSummary = {
+  id: string;
+  scope: string;
+  target: string;
+  trigger: string;
+  status: string;
+  summary: { created?: number; resolved?: number; active?: number };
+  error: string | null;
+  createdAt: string;
+};
+export type OrgSettings = {
+  fourEyes: boolean;
+  githubProductionApproval: boolean;
+  securityLevel: "S0" | "S1";
+};
 export type Command =
   | { name: "approve" | "retry" | "cancel" | "pause" | "resume" | "stop_all" }
   | { name: "revise"; feedback: string }
@@ -285,6 +331,7 @@ export function useLiveUpdates(): void {
       void client.invalidateQueries({ queryKey: ["plans"] });
       void client.invalidateQueries({ queryKey: ["deployments"] });
       void client.invalidateQueries({ queryKey: ["servers"] });
+      void client.invalidateQueries({ queryKey: ["findings"] });
     };
     source.addEventListener("task", onTask);
     return () => {

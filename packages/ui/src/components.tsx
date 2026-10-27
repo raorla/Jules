@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Fingerprint, Sparkles } from "lucide-react";
 import { ApiError, stepUp, type TaskState } from "./api.js";
@@ -353,6 +353,8 @@ export function Dialog({
   children: ReactNode;
   actions: ReactNode;
 }) {
+  // Un identifiant par dialogue : plusieurs dialogues coexistent sur une page (arrêt, passkey).
+  const titleId = useId();
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const dialog = ref.current;
@@ -360,9 +362,9 @@ export function Dialog({
     if (!open && dialog?.open) dialog.close();
   }, [open]);
   return (
-    <dialog ref={ref} onClose={onClose} aria-labelledby="dialog-title">
+    <dialog ref={ref} onClose={onClose} aria-labelledby={titleId}>
       <div className="dialog-body">
-        <h3 id="dialog-title">{title}</h3>
+        <h3 id={titleId}>{title}</h3>
         {children}
       </div>
       <div className="dialog-actions">{actions}</div>

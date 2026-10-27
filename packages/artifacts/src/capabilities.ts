@@ -92,6 +92,44 @@ export const capabilityInputs = {
     path: z.string().regex(/^\/[A-Za-z0-9._/-]{1,300}$/),
     label: line(100).optional(),
   }),
+  // Agent Sécurité (ARCHITECTURE.md §7) : audits exécutés par le worker, résultats sans valeur secrète.
+  audit_repo: z.object({}),
+  audit_image: z.object({ image: z.string().max(300) }),
+  audit_server: z.object({ server: serverName }),
+  audit_platform: z.object({}),
+  report_finding: z
+    .object({
+      findingId: z
+        .string()
+        .regex(/^[0-9a-f-]{8,36}$/)
+        .optional()
+        .describe("Finding existant à analyser (les 8 premiers caractères suffisent)."),
+      analysis: line(2000).describe("Exploitabilité, priorité, contexte : ton analyse."),
+      falsePositive: z
+        .boolean()
+        .default(false)
+        .describe("Proposer un faux positif ; seul un humain le confirme."),
+      new: z
+        .object({
+          scope: z.enum(["repo", "server"]),
+          server: serverName.optional(),
+          category: z.enum(["dependency", "secret", "code", "config", "server"]),
+          component: line(300),
+          title: line(300),
+          severity: z.enum(["critical", "high", "medium", "low"]),
+          evidence: line(1000).describe("Preuve courte, sans aucune valeur secrète."),
+        })
+        .optional()
+        .describe("Nouveau finding, trouvé par toi."),
+    })
+    .refine((v) => (v.findingId === undefined) !== (v.new === undefined), {
+      message: "donne soit findingId, soit new",
+    }),
+  propose_remediation: z.object({
+    findingId: z.string().regex(/^[0-9a-f-]{8,36}$/),
+    kind: z.enum(["developer", "devops"]),
+    request: line(4000).describe("Ce qu'il faut corriger, pour la tâche de remédiation."),
+  }),
   // Outils pièges (§7) : déclarés pour que la tentative soit refusée proprement et journalisée.
   merge_pull_request: z.object({ number: z.number().int().optional() }),
   deploy: z.object({ environment: z.string().max(50).optional() }),
@@ -132,6 +170,17 @@ export const capabilityDescriptions: Record<CapabilityName, string> = {
   server_git:
     "Opération git sur un serveur : fetch (lecture), pull en fast-forward ou clone (changements). Hooks désactivés.",
   server_publish_file: "Rend un fichier du serveur téléchargeable dans l'interface.",
+  audit_repo:
+    "Audite le repo de la tâche (secrets, dépendances par OSV, config d'infra) sur la branche par défaut. Les résultats deviennent des findings ; tu reçois leur liste.",
+  audit_image: "Audite une image de conteneur.",
+  audit_server:
+    "Audite un serveur par un script fixe : fichiers de secrets (chemins, droits, noms de variables, jamais de valeur), config SSH, ports, comptes, mises à jour, conteneurs.",
+  audit_platform:
+    "Audite la config de Jules : passkeys des admins, réglages d'approbation, clés d'hôte, refus récents.",
+  report_finding:
+    "Analyse un finding existant (findingId) ou enregistre un nouveau finding (new). Tu peux proposer un faux positif ; un humain le confirme.",
+  propose_remediation:
+    "S1 seulement : crée une tâche de remédiation liée au finding, développeur (type security, risque high) ou DevOps.",
   merge_pull_request: "Merge une pull request.",
   deploy: "Déploie dans un environnement.",
   read_secret: "Lit un secret.",

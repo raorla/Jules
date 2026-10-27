@@ -402,6 +402,7 @@ export function registerDevopsRoutes(
     return {
       fourEyes: org?.fourEyes ?? false,
       githubProductionApproval: org?.githubProductionApproval ?? false,
+      securityLevel: org?.securityLevel ?? "S0",
     };
   });
 
@@ -415,6 +416,7 @@ export function registerDevopsRoutes(
         .object({
           fourEyes: z.boolean().optional(),
           githubProductionApproval: z.boolean().optional(),
+          securityLevel: z.enum(["S0", "S1"]).optional(),
         })
         .safeParse(request.body);
       if (!body.success) {

@@ -19,6 +19,8 @@ export const TASK_STATES = [
   "diagnosing",
   "awaiting_plan_approval",
   "executing",
+  // Agent Sécurité (WORKFLOW.md §13) : audit et analyse des findings.
+  "auditing",
   "done",
   "waiting_provider",
   "blocked",
@@ -32,7 +34,14 @@ export type TaskType = "bug" | "feature" | "refactor" | "chore" | "docs" | "test
 export type Size = "S" | "M" | "L";
 export type Autonomy = "L0" | "L1" | "L2";
 export type Role =
-  "triager" | "specifier" | "architect" | "developer" | "reviewer" | "learner" | "devops";
+  | "triager"
+  | "specifier"
+  | "architect"
+  | "developer"
+  | "reviewer"
+  | "learner"
+  | "devops"
+  | "security";
 export type Agent = "developer" | "devops" | "security";
 
 /** États où une exécution d'agent doit tourner, et le rôle qui l'exécute. */
@@ -44,6 +53,7 @@ export const RUNNABLE_STATES: Readonly<Partial<Record<TaskState, Role>>> = {
   reviewing: "reviewer",
   learning: "learner",
   diagnosing: "devops",
+  auditing: "security",
 };
 
 export const TERMINAL_STATES: readonly TaskState[] = ["done", "cancelled"];
@@ -101,6 +111,8 @@ export type TaskEvent =
   /** Le worker s'est arrêté au milieu du plan : rien n'est relancé seul, un humain décide. */
   | { type: "plan_interrupted" }
   | { type: "plan_expired" }
+  /** Sécurité : rapport d'audit rendu, findings enregistrés et analysés. */
+  | { type: "audit_reported" }
   | { type: "run_without_result" }
   | { type: "limit_reached"; reason: string }
   | { type: "provider_unavailable" }
@@ -217,7 +229,20 @@ export function transition(ctx: TaskContext, event: TaskEvent): TransitionResult
       if (event.type !== "start") {
         return refuse(`${event.type} inattendu en ${state}`);
       }
-      return ctx.agent === "devops" ? ok("diagnosing", "réception") : ok("triaging", "réception");
+      return ctx.agent === "devops"
+        ? ok("diagnosing", "réception")
+        : ctx.agent === "security"
+          ? ok("auditing", "réception")
+          : ok("triaging", "réception");
+
+    case "auditing":
+      if (event.type === "questions_asked") {
+        return askQuestions(ctx);
+      }
+      if (event.type === "audit_reported") {
+        return ok("done", "audit rendu");
+      }
+      break;
 
     case "diagnosing":
       if (event.type === "questions_asked") {

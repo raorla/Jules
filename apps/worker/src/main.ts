@@ -8,6 +8,7 @@ import { Masker } from "./broker/masking.js";
 import { DeploymentService } from "./devops/deployments.js";
 import { PlanService } from "./devops/plans.js";
 import { ServerService } from "./devops/servers.js";
+import { AuditService } from "./security/audits.js";
 import { stopAll } from "./emergency.js";
 import { ensureWorkerKey } from "./sealed-secrets.js";
 import { ANTHROPIC_KEY_SECRET, GITHUB_APP_KEY_SECRET, loadWorkerEnv } from "./config.js";
@@ -70,6 +71,15 @@ const deployments: DeploymentService = new DeploymentService({
   log,
   runsDir: env.JULES_RUNS_DIR,
 });
+// Agent Sécurité (M8) : audits exécutés par le worker, findings en base.
+const audits = new AuditService({
+  db: database.db,
+  github,
+  servers,
+  masker,
+  log,
+  runsDir: env.JULES_RUNS_DIR,
+});
 const orchestrator = new Orchestrator({
   db: database.db,
   github,
@@ -77,6 +87,7 @@ const orchestrator = new Orchestrator({
   log,
   masker,
   devops: { servers, plans },
+  security: { audits },
   config: {
     runsDir: env.JULES_RUNS_DIR,
     promptsDir:
@@ -119,6 +130,7 @@ const worker = new Worker(
     runsDir: env.JULES_RUNS_DIR,
     secrets: store,
     devops: { servers, plans, deployments },
+    security: { audits },
   },
 );
 

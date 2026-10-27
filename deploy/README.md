@@ -150,6 +150,10 @@ Les réglages *quatre yeux* et *approbation de la production depuis GitHub* sont
 
 Si le worker s'arrête pendant un plan, le plan passe en `interrupted` au redémarrage et rien n'est relancé : regarde le journal des étapes du plan, vérifie l'état du serveur, puis relance la tâche (`/jules retry`) pour un nouveau diagnostic.
 
+### Agent Sécurité
+
+Chaque semaine, et à chaque merge sur la branche par défaut, Jules audite les repos, les serveurs validés et sa propre config. La page *Sécurité* liste les findings et leurs échéances (critique 7 jours, haut 30, moyen 90). Un finding critique ou haut ouvert bloque les playbooks `deploy*` de sa cible, jusqu'à sa correction ou une décision humaine : *accepter le risque* (passkey et échéance de moins d'un an) ou *confirmer un faux positif*. Par défaut, l'agent est en **S0** (il audite) ; passe-le en **S1** dans *Réglages* pour qu'il propose des tâches de remédiation. Les repos privés reçoivent les failles du code en SARIF (onglet Security) et des issues `security` ; rien n'est publié pour un repo public, ni pour un serveur.
+
 ## 9. Sauvegardes
 
 1. Renseigne le dépôt restic hors de l'hôte dans `deploy/backup.env` (S3, B2, SFTP…).

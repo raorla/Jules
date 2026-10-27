@@ -68,7 +68,7 @@ export function devopsBench(
   }
   const sshd: TestSshServer[] = [];
 
-  async function repo(githubRepoId = 99, fullName = "acme/sandbox") {
+  async function repo(githubRepoId = 99, fullName = "acme/sandbox", isPrivate = true) {
     const [installation] = await db
       .insert(installations)
       .values({
@@ -91,9 +91,12 @@ export function devopsBench(
         githubRepoId,
         fullName,
         defaultBranch: "main",
-        private: true,
+        private: isPrivate,
       })
-      .onConflictDoUpdate({ target: [repos.forge, repos.githubRepoId], set: { fullName } })
+      .onConflictDoUpdate({
+        target: [repos.forge, repos.githubRepoId],
+        set: { fullName, private: isPrivate },
+      })
       .returning();
     return row!;
   }

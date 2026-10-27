@@ -12,6 +12,7 @@ const SCREENS = [
   { name: "settings", path: "/settings", ready: "Passkeys" },
   { name: "servers", path: "/servers", ready: "web-staging" },
   { name: "deployments", path: "/deployments", ready: "Déploiements par semaine" },
+  { name: "security", path: "/security", ready: "Critiques et hauts ouverts" },
 ] as const;
 
 for (const colorScheme of ["dark", "light"] as const) {

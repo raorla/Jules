@@ -13,6 +13,15 @@ import { decide, type Decision, type Role } from "@jules/policy";
 import { enqueueEffect } from "../outbox.js";
 import { Masker, truncate } from "./masking.js";
 import {
+  auditImage,
+  auditPlatform,
+  auditRepo,
+  auditServer,
+  proposeRemediation,
+  reportFinding,
+  type SecurityTools,
+} from "./security-tools.js";
+import {
   serverCrontabRead,
   serverExec,
   serverGit,
@@ -34,6 +43,8 @@ export type CallContext = {
   stopped: boolean;
   /** Outils serveur de l'agent DevOps : absents pour les autres rôles. */
   devops?: DevopsTools;
+  /** Audits et findings de l'agent Sécurité. */
+  security?: SecurityTools;
 };
 
 export type CallOutcome = {
@@ -63,6 +74,11 @@ const LIMITS: Partial<Record<CapabilityName, Limit>> = {
   server_git: { perRun: 10 },
   server_run_playbook: { perRun: 5 },
   submit_change_plan: { perRun: 1 },
+  audit_repo: { perRun: 3 },
+  audit_server: { perRun: 10 },
+  audit_platform: { perRun: 2 },
+  report_finding: { perRun: 50 },
+  propose_remediation: { perRun: 5 },
 };
 
 async function latest<T>(tx: Tx, taskId: string, kind: string): Promise<T | undefined> {
@@ -145,7 +161,16 @@ async function storeArtifact(
 }
 
 const handlers: Partial<Record<CapabilityName, Handler>> = {
-  server_exec: (tx, ctx, input: { server: string; command: string }) => serverExec(tx, ctx, input),
+  server_exec: (tx, ctx, input: { server: string; command: string }) =>
+    serverExec(tx, { ...ctx, readOnly: ctx.role === "security" }, input),
+  audit_repo: (tx, ctx) => auditRepo(tx, ctx),
+  audit_server: (tx, ctx, input: { server: string }) => auditServer(tx, ctx, input),
+  audit_platform: (_tx, ctx) => auditPlatform(ctx),
+  audit_image: () => auditImage(),
+  report_finding: (tx, ctx, input: Parameters<typeof reportFinding>[2]) =>
+    reportFinding(tx, ctx, input),
+  propose_remediation: (tx, ctx, input: Parameters<typeof proposeRemediation>[2]) =>
+    proposeRemediation(tx, ctx, input),
   server_crontab_read: (tx, ctx, input: { server: string }) => serverCrontabRead(tx, ctx, input),
   server_git: (
     tx,

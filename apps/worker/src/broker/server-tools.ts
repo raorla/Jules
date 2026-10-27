@@ -13,6 +13,7 @@ import { decide, type Decision } from "@jules/policy";
 import type { CommandResult } from "@jules/ssh";
 import type { PlanService } from "../devops/plans.js";
 import { hostKeyTrusted, type ServerRow, type ServerService } from "../devops/servers.js";
+import { blockingFindings } from "../security/audits.js";
 
 // Outils `server_*` de l'agent DevOps (ARCHITECTURE.md §7). La décision (classe de la commande,
 // niveau D, environnement, clé d'hôte, gel) est prise dans la transaction de l'appel ; la commande
@@ -38,6 +39,8 @@ export type ToolContext = {
   taskId: string;
   stopped: boolean;
   devops?: DevopsTools;
+  /** Agent Sécurité : lecture seule, quel que soit le niveau D du serveur (ARCHITECTURE.md §7). */
+  readOnly?: boolean;
 };
 
 const unavailable: ToolResult = {
@@ -114,7 +117,7 @@ async function runOnServer(
   const commandClass = forcedClass ?? classification.class;
   const decision = decide({
     action: "server_action",
-    level: server.level,
+    level: ctx.readOnly ? "D0" : server.level,
     environment: server.environment,
     kind: "command",
     commandClass,
@@ -314,6 +317,10 @@ export async function serverRunPlaybook(
     via: "direct",
     hostKeyTrusted: hostKeyTrusted(server),
     frozen: server.frozen,
+    deployBlocked:
+      input.name.startsWith("deploy") &&
+      (await blockingFindings(tx, server.orgId, { repoId: server.repoId, serverId: server.id }))
+        .length > 0,
     controls: { stopped: ctx.stopped },
   });
   if (decision.effect !== "allow") {

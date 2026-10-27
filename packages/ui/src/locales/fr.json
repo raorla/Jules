@@ -11,7 +11,8 @@
     "settings": "Réglages",
     "operations": "Opérations",
     "servers": "Serveurs",
-    "deployments": "Déploiements"
+    "deployments": "Déploiements",
+    "security": "Sécurité"
   },
   "top": {
     "search": "Rechercher une tâche…",
@@ -164,7 +165,8 @@
     "failed": "en échec",
     "diagnosing": "diagnostic",
     "awaiting_plan_approval": "plan à approuver",
-    "executing": "exécution du plan"
+    "executing": "exécution du plan",
+    "auditing": "audit"
   },
   "risk": {
     "low": "risque faible",
@@ -217,7 +219,14 @@
     "skipped": "ignorée",
     "read": "lecture",
     "change": "changement",
-    "dangerous": "dangereuse"
+    "dangerous": "dangereuse",
+    "triaged": "analysé",
+    "in_remediation": "en remédiation",
+    "resolved": "résolu",
+    "accepted_risk": "risque accepté",
+    "false_positive": "faux positif",
+    "open": "ouvert",
+    "requested": "demandé"
   },
   "artifact": {
     "triage": "Triage",
@@ -315,5 +324,61 @@
   "notify": {
     "approval": "Une approbation t'attend.",
     "enable": "Activer les notifications"
+  },
+  "security": {
+    "title": "Sécurité",
+    "open_serious": "Critiques et hauts ouverts",
+    "overdue": "Hors échéance",
+    "reopened": "Réouvertures",
+    "fix_time": "Correction (haut)",
+    "days": "{{value}} j",
+    "findings": "Findings",
+    "active": "Actifs",
+    "all": "Tous",
+    "resolved": "Résolus",
+    "due": "échéance",
+    "overdue_chip": "échéance dépassée",
+    "until": "accepté jusqu'au",
+    "analysis": "Analyse de l'agent",
+    "fp_suggested": "faux positif proposé",
+    "remediation": "Remédiation",
+    "accept": "Accepter le risque",
+    "accept_help": "Passkey exigée ; le finding se rouvre à l'échéance.",
+    "false_positive": "Confirmer le faux positif",
+    "reopen": "Rouvrir",
+    "note": "Justification",
+    "until_label": "Jusqu'au",
+    "decided": "Décision enregistrée.",
+    "audit": "Lancer un audit",
+    "audit_platform": "Auditer Jules",
+    "audit_sent": "Audit demandé : le worker l'exécute.",
+    "audits": "Audits récents",
+    "empty": "Aucun finding",
+    "empty_sub": "actif.",
+    "empty_text": "Les audits planifiés, les merges et les audits à la demande alimentent cette liste.",
+    "target": "Cible",
+    "active_count": "{{count}} actif(s)"
+  },
+  "severity": {
+    "critical": "critique",
+    "high": "haut",
+    "medium": "moyen",
+    "low": "faible"
+  },
+  "scope": {
+    "repo": "repo",
+    "server": "serveur",
+    "platform": "plateforme",
+    "image": "image"
+  },
+  "org": {
+    "title": "Organisation",
+    "four_eyes": "Quatre yeux en production",
+    "four_eyes_help": "L'approbateur d'un plan de production doit être une autre personne que le demandeur.",
+    "github_prod": "Approbation de la production depuis GitHub",
+    "github_prod_help": "Désactivée par défaut : un commentaire ne permet pas de demander une passkey.",
+    "security_level": "Agent Sécurité",
+    "on": "Activé",
+    "off": "Désactivé"
   }
 }

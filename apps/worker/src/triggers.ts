@@ -13,7 +13,7 @@ export type TriggerSettings = {
 export type TaskTrigger = {
   readonly source: "issue_comment" | "issue_opened" | "issue_labeled";
   /** `@jules devops <demande>` crée une demande pour l'agent DevOps (ARCHITECTURE.md §12). */
-  readonly agent?: "developer" | "devops";
+  readonly agent?: "developer" | "devops" | "security";
   readonly installationId: number;
   readonly repo: {
     readonly githubId: number;
@@ -31,8 +31,8 @@ export type TaskTrigger = {
 
 export type TriggerResult = { trigger: TaskTrigger } | { setup: TaskTrigger } | { ignored: string };
 
-/** Sous-commandes réservées qui arrivent avec leur jalon (`@jules security` en M8). */
-const RESERVED_SUBCOMMANDS = new Set(["security"]);
+/** Sous-commandes réservées qui arrivent avec leur jalon (aucune depuis M8). */
+const RESERVED_SUBCOMMANDS = new Set<string>([]);
 
 const account = z.object({ id: z.number(), login: z.string(), type: z.string() });
 const repository = z.object({
@@ -122,8 +122,8 @@ export function detectTrigger(
     if (RESERVED_SUBCOMMANDS.has(subcommand)) {
       return { ignored: `subcommand_unavailable:${subcommand}` };
     }
-    if (subcommand === "devops") {
-      return { trigger: { ...toTrigger(p, "issue_comment", p.comment.body), agent: "devops" } };
+    if (subcommand === "devops" || subcommand === "security") {
+      return { trigger: { ...toTrigger(p, "issue_comment", p.comment.body), agent: subcommand } };
     }
     return { trigger: toTrigger(p, "issue_comment", p.comment.body) };
   }

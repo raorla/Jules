@@ -82,13 +82,18 @@ describe("detectTrigger", () => {
       "pull_request_comment",
     ],
     ["sans mention", issueComment({ body: "merci" }), "no_mention"],
-    [
-      "@jules security (M8)",
-      issueComment({ body: "@jules security audite le repo" }),
-      "subcommand_unavailable:security",
-    ],
   ])("ignore %s", (_, payload, reason) => {
     expect(detectTrigger("issue_comment", payload, settings)).toEqual({ ignored: reason });
+  });
+
+  it("crée une demande Sécurité avec @jules security", () => {
+    expect(
+      detectTrigger(
+        "issue_comment",
+        issueComment({ body: "@jules security audite le repo" }),
+        settings,
+      ),
+    ).toMatchObject({ trigger: { agent: "security" } });
   });
 
   it("crée une demande DevOps avec @jules devops", () => {

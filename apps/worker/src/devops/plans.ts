@@ -23,6 +23,7 @@ import type { Logger } from "pino";
 import { isStopped } from "../controls.js";
 import { enqueueEffect } from "../outbox.js";
 import { applyTransition } from "../transitions.js";
+import { blockingFindings } from "../security/audits.js";
 import { hostKeyTrusted, type ServerRow, type ServerService } from "./servers.js";
 
 // Plans de changement (WORKFLOW.md §12.1). L'agent propose, le worker exécute : les étapes sont
@@ -461,6 +462,12 @@ export class PlanService {
       via: "plan",
       hostKeyTrusted: hostKeyTrusted(fresh),
       frozen: fresh.frozen,
+      // Revérifié à chaque étape : un finding apparu depuis l'approbation bloque encore `deploy*`.
+      deployBlocked:
+        step.phase !== "verify" &&
+        (step.playbook?.startsWith("deploy") ?? false) &&
+        (await blockingFindings(db, plan.orgId, { repoId: fresh.repoId, serverId: fresh.id }))
+          .length > 0,
       controls: { stopped: await isStopped(db, plan.orgId, {}) },
     });
     if (decision.effect !== "allow") {

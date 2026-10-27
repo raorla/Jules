@@ -33,6 +33,10 @@ export const orgs = pgTable("orgs", {
   fourEyes: boolean("four_eyes").notNull().default(false),
   /** Approbation de la production depuis GitHub (§12) : désactivée par défaut, faute de passkey. */
   githubProductionApproval: boolean("github_production_approval").notNull().default(false),
+  /** Agent Sécurité (§6.3) : S0 audite, S1 peut en plus proposer des remédiations. */
+  securityLevel: text("security_level", { enum: ["S0", "S1"] })
+    .notNull()
+    .default("S0"),
   createdAt: createdAt(),
 });
 
@@ -654,7 +658,7 @@ export const serverCommands = pgTable(
       .references(() => servers.id),
     runId: uuid("run_id").references(() => runs.id),
     planId: uuid("plan_id").references(() => changePlans.id),
-    source: text("source", { enum: ["agent", "plan", "deployment"] }).notNull(),
+    source: text("source", { enum: ["agent", "plan", "deployment", "audit"] }).notNull(),
     command: text("command").notNull(),
     commandClass: text("command_class", { enum: ["read", "change", "dangerous"] }).notNull(),
     decision: text("decision", { enum: ["allow", "deny", "require_approval"] }).notNull(),
@@ -710,4 +714,80 @@ export const deployments = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [index("deployments_repo_env_idx").on(t.repoId, t.environment, t.createdAt)],
+);
+
+// Agent Sécurité (M8, WORKFLOW.md §13).
+
+export const FINDING_STATUSES = [
+  "open",
+  "triaged",
+  "in_remediation",
+  "resolved",
+  "accepted_risk",
+  "false_positive",
+] as const;
+export const SEVERITY_LEVELS = ["critical", "high", "medium", "low"] as const;
+
+/** Audits : planifiés, demandés, ou déclenchés par un merge. Un seul en cours par cible. */
+export const audits = pgTable(
+  "audits",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    scope: text("scope", { enum: ["repo", "server", "platform", "image"] }).notNull(),
+    targetId: text("target_id").notNull(),
+    trigger: text("trigger", { enum: ["schedule", "merge", "manual", "agent"] }).notNull(),
+    status: text("status", { enum: ["requested", "running", "succeeded", "failed"] }).notNull(),
+    /** Commit audité (repo) : la résolution d'un finding renvoie à un état précis du code. */
+    commitSha: text("commit_sha"),
+    scanners: jsonb("scanners").notNull().default([]),
+    summary: jsonb("summary").notNull().default({}),
+    error: text("error"),
+    requestedBy: uuid("requested_by").references(() => users.id),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("audits_target_idx").on(t.scope, t.targetId, t.createdAt)],
+);
+
+/** Findings : dédupliqués par cible, catégorie, composant et titre ; preuves masquées. */
+export const findings = pgTable(
+  "findings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    scope: text("scope", { enum: ["repo", "server", "platform", "image"] }).notNull(),
+    targetId: text("target_id").notNull(),
+    key: text("key").notNull(),
+    category: text("category").notNull(),
+    component: text("component").notNull(),
+    title: text("title").notNull(),
+    severity: text("severity", { enum: SEVERITY_LEVELS }).notNull(),
+    status: text("status", { enum: FINDING_STATUSES }).notNull().default("open"),
+    scanner: text("scanner").notNull(),
+    evidence: text("evidence").notNull(),
+    details: jsonb("details").notNull().default({}),
+    /** Analyse de l'agent (exploitabilité, priorité), et sa suggestion de faux positif. */
+    analysis: text("analysis"),
+    falsePositiveSuggested: boolean("false_positive_suggested").notNull().default(false),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastAuditId: uuid("last_audit_id").references(() => audits.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    dueAt: timestamp("due_at", { withTimezone: true }),
+    reopenCount: integer("reopen_count").notNull().default(0),
+    /** Risque accepté : jusqu'à quand, par qui, pourquoi. */
+    acceptedUntil: timestamp("accepted_until", { withTimezone: true }),
+    decidedBy: uuid("decided_by").references(() => users.id),
+    decisionNote: text("decision_note"),
+    remediationTaskId: uuid("remediation_task_id").references(() => tasks.id),
+    githubIssueNumber: integer("github_issue_number"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("findings_org_key_idx").on(t.orgId, t.key),
+    index("findings_target_idx").on(t.scope, t.targetId, t.status),
+  ],
 );
