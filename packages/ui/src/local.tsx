@@ -1,5 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, FolderPlus, GitMerge, HardDrive, ShieldCheck } from "lucide-react";
+import {
+  ArrowLeftRight,
+  FolderPlus,
+  GitMerge,
+  HardDrive,
+  KeyRound,
+  ShieldCheck,
+} from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, type Me, type TaskDetail } from "./api.js";
@@ -76,6 +83,69 @@ export function DesktopModeCard() {
           </div>
         )}
       </div>
+    </Card>
+  );
+}
+
+/**
+ * Clé API du fournisseur en mode local : rangée dans le trousseau du système, jamais affichée ni
+ * envoyée à l'api. La remplacer relance le worker, qui la reçoit par la remise unique.
+ */
+export function LocalApiKeyCard({ me }: { me: Me }) {
+  const { t } = useTranslation();
+  const bridge = useDesktop();
+  const session = useDesktopSession();
+  const [value, setValue] = useState("");
+  const replace = useMutation({
+    mutationFn: async () => {
+      await bridge?.local?.setApiKey(value);
+    },
+    onSuccess: () => {
+      setValue("");
+    },
+  });
+  if (session?.mode !== "local" || !bridge?.local || me.role !== "admin") {
+    return null;
+  }
+  return (
+    <Card title={t("local.api_key")} icon={<KeyRound aria-hidden="true" />}>
+      <form
+        className="card-body stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          replace.mutate();
+        }}
+      >
+        <p className="ink-2">{t("local.api_key_text")}</p>
+        <label className="stack">
+          <span className="muted">{t("local.api_key_new")}</span>
+          <input
+            className="field"
+            type="password"
+            required
+            autoComplete="off"
+            spellCheck={false}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        </label>
+        <div>
+          <button className="pill" type="submit" disabled={replace.isPending}>
+            <KeyRound aria-hidden="true" />
+            {replace.isPending ? t("local.api_key_saving") : t("local.api_key_replace")}
+          </button>
+        </div>
+        {replace.isSuccess && (
+          <p role="status" className="chip ok">
+            {t("local.api_key_replaced")}
+          </p>
+        )}
+        {replace.isError && (
+          <p role="alert" className="chip crit">
+            {replace.error instanceof Error ? replace.error.message : String(replace.error)}
+          </p>
+        )}
+      </form>
     </Card>
   );
 }

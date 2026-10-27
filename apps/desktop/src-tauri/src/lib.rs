@@ -213,11 +213,32 @@ async fn local_status() -> Result<LocalStatus, String> {
     tauri::async_runtime::spawn_blocking(|| local::status().into()).await.map_err(|e| e.to_string())
 }
 
-/// Lance la pile et remet la clé maître du trousseau au worker, une seule fois.
+/// Lance la pile et remet la clé maître et la clé API du trousseau au worker, une seule fois.
 #[tauri::command]
 async fn local_start(app: AppHandle) -> Result<LocalStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        local::start(&local_paths(&app)?, &Keychain, env!("CARGO_PKG_VERSION")).map(Into::into)
+        local::start(&local_paths(&app)?, &Keychain, env!("CARGO_PKG_VERSION"), false).map(Into::into)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// La clé API du fournisseur est dans le trousseau ; l'interface ne la relit jamais.
+#[tauri::command]
+fn local_has_api_key() -> Result<bool, String> {
+    Ok(Keychain.get(local::API_KEY_ENTRY)?.is_some())
+}
+
+/// Range la clé API dans le trousseau. Si la pile tourne, le worker est relancé pour la recevoir.
+#[tauri::command]
+async fn local_set_api_key(app: AppHandle, key: String) -> Result<LocalStatus, String> {
+    let key = local::api_key(&key)?;
+    Keychain.set(local::API_KEY_ENTRY, &key)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        if !local::status().running {
+            return Ok(local::status().into());
+        }
+        local::start(&local_paths(&app)?, &Keychain, env!("CARGO_PKG_VERSION"), true).map(Into::into)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -272,6 +293,8 @@ pub fn run() {
             local_status,
             local_start,
             local_stop,
+            local_has_api_key,
+            local_set_api_key,
             local_login_secret,
             local_container_path
         ])

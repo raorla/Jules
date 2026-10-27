@@ -1,5 +1,5 @@
 //! Lancement de la pile locale (M10) : détection du moteur, secrets du trousseau, remise de la clé
-//! maître au worker, `compose up`. Le shell Tauri n'y ajoute que ses dossiers et le trousseau du
+//! maître et de la clé API du fournisseur au worker, `compose up`. Le shell Tauri n'y ajoute que ses dossiers et le trousseau du
 //! système (trait `Vault`).
 
 use std::io::{Read, Write};
@@ -9,7 +9,7 @@ use std::process::Command;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use crate::engine::{parse_docker_info, parse_podman_info, Engine, DOCKER_INFO_FORMAT, PODMAN_INFO_FORMAT};
+use crate::engine::{parse_docker_info, parse_podman_info, Engine, EngineKind, DOCKER_INFO_FORMAT, PODMAN_INFO_FORMAT};
 use crate::handoff::{random_master_key, serve_once, HandoffError, Secrets};
 use crate::pkce::random_token;
 use crate::stack::{compose_command, compose_env, compose_failure, daemon_path, login_hash, StackConfig, PROJECT};
@@ -17,6 +17,9 @@ use crate::stack::{compose_command, compose_env, compose_failure, daemon_path, l
 pub const LOCAL_API_PORT: u16 = 43117;
 pub const MASTER_KEY_ENTRY: &str = "local:master-key";
 pub const LOGIN_ENTRY: &str = "local:login-secret";
+/// Clé API du fournisseur de modèle, saisie dans l'app : en mode local, elle ne passe ni par la base
+/// ni par une passkey (la webview Linux n'en gère pas), seulement par le trousseau et la remise.
+pub const API_KEY_ENTRY: &str = "local:anthropic-api-key";
 const HANDOFF_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// Le trousseau du système (Keychain, Gestionnaire d'identifiants, Secret Service).
@@ -86,10 +89,31 @@ pub fn healthy(port: u16) -> bool {
         && response.contains("\"mode\":\"local\"")
 }
 
+/// Le worker de la pile tourne. Il s'arrête sans redémarrer (la remise n'a lieu qu'une fois) : une api
+/// qui répond ne suffit donc pas à dire que la pile tourne.
+pub fn worker_running(kind: EngineKind) -> bool {
+    let (program, _) = compose_command(kind);
+    let project = format!("label=com.docker.compose.project={PROJECT}");
+    Command::new(program)
+        .args(["ps", "-q", "--filter", &project, "--filter", "label=com.docker.compose.service=worker"])
+        .args(["--filter", "status=running"])
+        .output()
+        .is_ok_and(|output| output.status.success() && !output.stdout.trim_ascii().is_empty())
+}
+
 pub fn status() -> Status {
     let engine = detect();
-    let running = engine.is_some() && healthy(LOCAL_API_PORT);
+    let running = engine.as_ref().is_some_and(|e| healthy(LOCAL_API_PORT) && worker_running(e.kind));
     Status { engine, running }
+}
+
+/// Clé API saisie dans l'app : une seule ligne, sans espace, de taille raisonnable.
+pub fn api_key(raw: &str) -> Result<String, String> {
+    let key = raw.trim();
+    if !(20..=512).contains(&key.len()) || !key.chars().all(|c| c.is_ascii_graphic()) {
+        return Err("clé API invalide : une seule ligne, sans espace".into());
+    }
+    Ok(key.to_string())
 }
 
 fn private_dir(path: &Path) -> Result<(), String> {
@@ -143,12 +167,14 @@ fn handoff_server(engine: &Engine, dir: &Path, token: &str, secrets: Secrets) ->
     }
 }
 
-/// Lance la pile et remet la clé maître au worker, une seule fois. Rien de secret sur le disque.
-pub fn start(paths: &LocalPaths, vault: &dyn Vault, version: &str) -> Result<Status, String> {
+/// Lance la pile et remet la clé maître et la clé API au worker, une seule fois. Rien de secret sur le
+/// disque. `recreate_worker` relance le worker même s'il tourne : il reçoit alors une clé API changée.
+pub fn start(paths: &LocalPaths, vault: &dyn Vault, version: &str, recreate_worker: bool) -> Result<Status, String> {
     let engine = detect().ok_or("ni Docker ni Podman ne répond")?;
-    if healthy(LOCAL_API_PORT) {
+    if !recreate_worker && healthy(LOCAL_API_PORT) && worker_running(engine.kind) {
         return Ok(Status { engine: Some(engine), running: true });
     }
+    let api_key = vault.get(API_KEY_ENTRY)?.ok_or("clé API du fournisseur absente du trousseau")?;
     let master_key = vault.get_or_create(MASTER_KEY_ENTRY, random_master_key)?;
     let login_secret = vault.get_or_create(LOGIN_ENTRY, || random_token(32))?;
     let runs_dir = paths.data.join("runs");
@@ -156,7 +182,7 @@ pub fn start(paths: &LocalPaths, vault: &dyn Vault, version: &str) -> Result<Sta
     let handoff_dir = paths.runtime.as_ref().map_or_else(|| paths.data.join("handoff"), |d| d.join("jules"));
     private_dir(&handoff_dir)?;
     let token = random_token(32);
-    let secrets = Secrets { master_key, previous_keys: vec![], anthropic_api_key: None };
+    let secrets = Secrets { master_key, previous_keys: vec![], anthropic_api_key: Some(api_key) };
     let (handoff_url, server) = handoff_server(&engine, &handoff_dir, &token, secrets)?;
 
     #[cfg(unix)]
@@ -186,11 +212,14 @@ pub fn start(paths: &LocalPaths, vault: &dyn Vault, version: &str) -> Result<Sta
         version,
     };
     let (program, prefix) = compose_command(engine.kind);
+    // Un jeton de remise neuf change l'environnement du worker : compose le recrée à chaque lancement.
+    let recreate: &[&str] = if recreate_worker { &["--force-recreate", "worker"] } else { &[] };
     let up = Command::new(program)
         .args(prefix)
         .args(["-p", PROJECT, "-f"])
         .arg(&paths.compose)
         .args(["up", "-d", "--wait"])
+        .args(recreate)
         .envs(compose_env(&config))
         .output()
         .map_err(|e| e.to_string())?;
@@ -271,6 +300,17 @@ mod tests {
         assert!(!healthy(serve(r#"{"ok":true,"api":"v1","mode":"server"}"#)));
         let closed = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         assert!(!healthy(closed));
+    }
+
+    #[test]
+    fn api_keys_are_one_line_without_spaces() {
+        let key = format!("sk-ant-api03-{}", "a".repeat(40));
+        assert_eq!(api_key(&format!("  {key}\n")), Ok(key.clone()));
+        assert!(api_key("trop-courte").is_err());
+        assert!(api_key(&format!("{key} {key}")).is_err());
+        assert!(api_key(&format!("{key}\n{key}")).is_err());
+        assert!(api_key(&"a".repeat(513)).is_err());
+        assert!(api_key("clé-avec-des-accents-é-0123456789").is_err());
     }
 
     #[test]

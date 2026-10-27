@@ -1,6 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowLeftRight, HardDrive, LogIn, RefreshCw, Server as ServerIcon } from "lucide-react";
+import {
+  ArrowLeftRight,
+  HardDrive,
+  KeyRound,
+  LogIn,
+  RefreshCw,
+  Server as ServerIcon,
+} from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { api, configureApi, type Plan } from "./api.js";
@@ -30,9 +37,13 @@ export type LocalStack = {
   savedMode(): Promise<DesktopMode | null>;
   saveMode(mode: DesktopMode | null): Promise<void>;
   status(): Promise<LocalStatus>;
-  /** Lance PostgreSQL, l'api et le worker, puis remet la clé maître du trousseau au worker. */
+  /** Lance PostgreSQL, l'api et le worker, puis remet la clé maître et la clé API au worker. */
   start(): Promise<LocalStatus>;
   stop(): Promise<void>;
+  /** La clé API du fournisseur est dans le trousseau ; l'interface ne la relit jamais. */
+  hasApiKey(): Promise<boolean>;
+  /** Range la clé API dans le trousseau ; si la pile tourne, le worker est relancé pour la recevoir. */
+  setApiKey(key: string): Promise<LocalStatus>;
   /** Secret de connexion à l'api locale, tiré au premier lancement et rangé dans le trousseau. */
   loginSecret(): Promise<{ secret: string; login: string }>;
   /** Sélecteur de dossier du système. */
@@ -102,6 +113,7 @@ type Step =
   | "connecting"
   | "local_starting"
   | "local_install"
+  | "local_key"
   | "local_failed";
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -120,6 +132,7 @@ export function DesktopGate({ bridge, children }: { bridge: DesktopBridge; child
   const [error, setError] = useState<string | undefined>();
   const [session, setSession] = useState<DesktopSession | undefined>();
   const [local, setLocal] = useState<LocalStatus | undefined>();
+  const [apiKey, setApiKey] = useState("");
   const stack = bridge.local;
 
   /** Version acceptée par ce serveur ; sinon, l'écran de mise à jour. */
@@ -184,6 +197,11 @@ export function DesktopGate({ bridge, children }: { bridge: DesktopBridge; child
         setStep("local_install");
         return;
       }
+      // La clé API du fournisseur est saisie ici, une fois : elle va au trousseau, jamais en base.
+      if (!(await stack.hasApiKey())) {
+        setStep("local_key");
+        return;
+      }
       if (!status.running || !status.url) {
         status = await stack.start();
         setLocal(status);
@@ -207,6 +225,22 @@ export function DesktopGate({ bridge, children }: { bridge: DesktopBridge; child
     } catch (e) {
       setError(message(e));
       setStep("local_failed");
+    }
+  };
+
+  const saveApiKey = async () => {
+    if (!stack) {
+      return;
+    }
+    setError(undefined);
+    setStep("local_starting");
+    try {
+      await stack.setApiKey(apiKey);
+      setApiKey("");
+      await connectLocal();
+    } catch (e) {
+      setError(message(e));
+      setStep("local_key");
     }
   };
 
@@ -329,6 +363,33 @@ export function DesktopGate({ bridge, children }: { bridge: DesktopBridge; child
               </li>
             </ul>
           </div>
+        )}
+        {step === "local_key" && (
+          <form
+            className="stack"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveApiKey();
+            }}
+          >
+            <p className="ink-2">{t("desktop.api_key_text")}</p>
+            <label className="stack">
+              <span className="muted">{t("desktop.api_key")}</span>
+              <input
+                className="field"
+                type="password"
+                required
+                autoComplete="off"
+                spellCheck={false}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+              />
+            </label>
+            <button className="pill primary" type="submit">
+              <KeyRound aria-hidden="true" />
+              {t("desktop.api_key_save")}
+            </button>
+          </form>
         )}
         {step === "update" && (
           <div className="stack" role="alert">

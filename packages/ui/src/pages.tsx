@@ -28,7 +28,7 @@ import {
 } from "./api.js";
 import { ArtifactCards } from "./artifacts.js";
 import { PendingPlans } from "./devops.js";
-import { DesktopModeCard, LocalMergeCard, LocalReposCard } from "./local.js";
+import { DesktopModeCard, LocalApiKeyCard, LocalMergeCard, LocalReposCard } from "./local.js";
 import { OrgSettingsCard } from "./security.js";
 import {
   Card,
@@ -566,6 +566,7 @@ export function SettingsPage({ me }: { me: Me }) {
     <div className="grid-2">
       <div className="stack">
         <DesktopModeCard />
+        <LocalApiKeyCard me={me} />
         <LocalReposCard me={me} />
         <Card title={t("settings.repos")}>
           <div className="card-body rows">

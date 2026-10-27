@@ -202,7 +202,7 @@ Elle fonctionne selon deux modes :
 
 **Mode local.** L'app lance la pile Jules sur la machine (worker, PostgreSQL, egress proxy) avec Docker ou Podman, et travaille sur des dossiers locaux (forge locale, §11).
 - La pile est `deploy/local/compose.yaml`, avec les images du serveur. L'api n'écoute que sur l'adresse de bouclage (`127.0.0.1:43117`) et n'a aucun identifiant GitHub ; PostgreSQL n'a ni port publié ni mot de passe (réseau interne).
-- Les secrets sont rangés dans le trousseau du système (Keychain sur macOS, Gestionnaire d'identifiants sur Windows, Secret Service sur Linux). L'environnement des conteneurs n'en contient aucun, car Docker le garde sur le disque. Au démarrage, l'app remet la clé maître au worker une seule fois, par un point d'accès éphémère : un socket Unix dans un dossier privé, monté dans le seul conteneur du worker (Linux), ou une adresse de bouclage jointe par `host.docker.internal` (Docker Desktop). Le jeton de cette remise ne sert qu'une fois ; un worker arrêté est relancé par l'app, avec une nouvelle remise.
+- Les secrets sont rangés dans le trousseau du système (Keychain sur macOS, Gestionnaire d'identifiants sur Windows, Secret Service sur Linux). L'environnement des conteneurs n'en contient aucun, car Docker le garde sur le disque. Au démarrage, l'app remet la clé maître et la clé API du fournisseur au worker une seule fois, par un point d'accès éphémère : un socket Unix dans un dossier privé, monté dans le seul conteneur du worker (Linux), ou une adresse de bouclage jointe par `host.docker.internal` (Docker Desktop). Le jeton de cette remise ne sert qu'une fois ; un worker arrêté est relancé par l'app, avec une nouvelle remise. La clé API est demandée par l'app au premier démarrage et se remplace dans ses réglages (le worker est alors relancé) : en mode local, elle ne passe ni par la base ni par l'api, et c'est la session du système qui protège le trousseau, à la place de la passkey demandée sur un serveur.
 - L'app se connecte à l'api locale avec un secret tiré au premier lancement et rangé dans le trousseau ; l'api n'en connaît que le hash. La personne est admin de son instance locale.
 - L'isolation dépend du système. Sous Linux, gVisor est utilisé s'il est installé (`runsc` parmi les runtimes de Docker). Sous macOS et Windows, les conteneurs tournent dans la VM de Docker Desktop, sans gVisor. Sans l'un ni l'autre, c'est un conteneur ordinaire. L'app affiche le niveau d'isolation en vigueur en permanence.
 - Changer de mode ne demande pas de réinstaller : le mode est un réglage de l'app, et les deux connexions restent dans le trousseau.
@@ -223,7 +223,7 @@ C'est le seul chemin vers Internet depuis les sandboxes. Il fonctionne avec une 
 |---|---|---|---|
 | Clé privée de la GitHub App | worker, chiffrée au repos | forge client | gateway, api, sandbox, logs |
 | Jeton d'installation GitHub | mémoire du worker ; durée ≤ 1 h ; portée limitée au repo et aux permissions de l'opération | clone, push, API GitHub | sandbox, `.git/config` du workspace |
-| Clé API Anthropic | worker | proxy modèle du broker | sandbox, api |
+| Clé API Anthropic | worker, chiffrée au repos ; trousseau du système en mode local | proxy modèle du broker | sandbox, api |
 | Clés SSH et accès git des serveurs | worker, chiffrés au repos | exécuteur SSH, en mémoire le temps d'une connexion | sandbox, api (écriture seule), logs |
 | Secret de webhook | gateway | vérification HMAC | worker, sandbox |
 | Secret client OAuth, secret de session | api | connexion web et desktop | worker, sandbox |

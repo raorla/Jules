@@ -402,7 +402,10 @@
     "engine_missing": "Ni Docker ni Podman n'est installé",
     "engine_help": "Le mode local lance Jules dans des conteneurs. Installe l'un des deux, démarre-le, puis réessaie.",
     "engine_docker": "macOS, Windows (avec WSL 2) et Linux",
-    "engine_podman": "alternative libre, sans service en arrière-plan"
+    "engine_podman": "alternative libre, sans service en arrière-plan",
+    "api_key": "Clé API Anthropic",
+    "api_key_text": "Jules a besoin de ta clé API pour faire travailler ses agents. Elle est rangée dans le trousseau du système, jamais dans un fichier ni dans la base, et remise au worker à chaque démarrage.",
+    "api_key_save": "Enregistrer dans le trousseau"
   },
   "local": {
     "mode_title": "Mode de l'app",
@@ -424,6 +427,12 @@
     "merging": "Merge en cours dans le dossier…",
     "merged": "Mergée ({{sha}}) : la branche de base du dossier est à jour.",
     "merge_refused": "Merge refusé",
-    "merge_role": "Le merge demande le rôle maintainer."
+    "merge_role": "Le merge demande le rôle maintainer.",
+    "api_key": "Clé API",
+    "api_key_text": "Rangée dans le trousseau du système : Jules ne l'affiche jamais. La remplacer relance le worker ; une exécution en cours est interrompue.",
+    "api_key_new": "Nouvelle clé API Anthropic",
+    "api_key_replace": "Remplacer la clé",
+    "api_key_saving": "Relance du worker…",
+    "api_key_replaced": "Clé remplacée, le worker l'a reçue."
   }
 }

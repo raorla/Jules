@@ -402,7 +402,10 @@
     "engine_missing": "Neither Docker nor Podman is installed",
     "engine_help": "Local mode runs Jules in containers. Install one of them, start it, then retry.",
     "engine_docker": "macOS, Windows (with WSL 2) and Linux",
-    "engine_podman": "free alternative, no background service"
+    "engine_podman": "free alternative, no background service",
+    "api_key": "Anthropic API key",
+    "api_key_text": "Jules needs your API key to run its agents. It is kept in the system keychain, never in a file or in the database, and handed to the worker each time it starts.",
+    "api_key_save": "Save to the keychain"
   },
   "local": {
     "mode_title": "App mode",
@@ -424,6 +427,12 @@
     "merging": "Merging in the folder…",
     "merged": "Merged ({{sha}}): the folder's base branch is up to date.",
     "merge_refused": "Merge refused",
-    "merge_role": "Merging requires the maintainer role."
+    "merge_role": "Merging requires the maintainer role.",
+    "api_key": "API key",
+    "api_key_text": "Kept in the system keychain: Jules never shows it. Replacing it restarts the worker; a run in progress is interrupted.",
+    "api_key_new": "New Anthropic API key",
+    "api_key_replace": "Replace the key",
+    "api_key_saving": "Restarting the worker…",
+    "api_key_replaced": "Key replaced, the worker has it."
   }
 }
