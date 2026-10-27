@@ -2,13 +2,28 @@
 
 Ce guide met en service le gateway et le worker sur un hôte Linux, avec la GitHub App installée sur un repo bac à sable. À la fin, un commentaire `@jules` dans une issue reçoit un commentaire de statut.
 
-Ce qui tourne en M0 : `postgres`, `migrate` (une fois au démarrage), `gateway`, `worker`, et au choix `caddy` ou `cloudflared` pour exposer le gateway en TLS. Le sandbox, le broker et gVisor arrivent en M1.
+Ce qui tourne : `postgres`, `migrate` (une fois au démarrage), `gateway`, `worker`, et au choix `caddy` ou `cloudflared` pour exposer le gateway en TLS. Depuis M1, le worker lance un sandbox gVisor et un egress proxy par exécution.
 
 ## 1. Prérequis
 
 - Un hôte Linux avec Docker et le plugin compose.
 - Un nom de domaine (avec Caddy) ou un tunnel Cloudflare.
 - Le repo Jules copié dans `/opt/jules` (le timer de sauvegarde suppose ce chemin).
+- Docker 28 ou plus récent : le réseau de chaque exécution utilise `gateway_mode_ipv4=isolated`, qui coupe toute route vers l'hôte.
+- gVisor, déclaré comme runtime Docker. Le broker est joint par un socket Unix monté dans le sandbox : gVisor doit l'autoriser (`--host-uds=open`).
+
+  ```bash
+  # https://gvisor.dev/docs/user_guide/install/ (dépôt apt), puis :
+  sudo runsc install -- --host-uds=open
+  sudo systemctl restart docker
+  docker run --rm --runtime=runsc hello-world
+  ```
+
+- Le dossier des exécutions, possédé par l'utilisateur 1000 (celui du worker et des sandboxes) :
+
+  ```bash
+  sudo install -d -o 1000 -g 1000 -m 700 /var/lib/jules/runs
+  ```
 
 ## 2. Secrets locaux
 
@@ -52,16 +67,20 @@ Ensuite :
 2. génère une **clé privée** (fichier `.pem`) ;
 3. choisis la mention qui déclenche Jules (`JULES_MENTION` dans `deploy/.env`). `@jules` notifie aussi le compte GitHub public du même nom : préfère le nom de ton App, par exemple `@jules-mtonga`.
 
-## 4. Enregistrer la clé de l'App, chiffrée
+## 4. Enregistrer les clés, chiffrées
 
 ```bash
 cd deploy
 docker compose build
+docker compose --profile images build          # images du sandbox et de l'egress proxy
 docker compose run --rm -T worker node dist/cli.js secrets set github_app_private_key < ~/Téléchargements/jules.private-key.pem
 shred -u ~/Téléchargements/jules.private-key.pem
+# Clé d'un compte Anthropic dédié à Jules, avec une limite de dépense dans la console :
+docker compose run --rm -T worker node dist/cli.js secrets set anthropic_api_key < anthropic.key
+shred -u anthropic.key
 ```
 
-La clé est chiffrée par la clé maître avant d'entrer en base. Elle n'existe plus en clair nulle part.
+Les clés sont chiffrées par la clé maître avant d'entrer en base. Elles n'existent plus en clair nulle part, et n'entrent jamais dans un sandbox : le broker remplace le jeton d'exécution par la vraie clé.
 
 ## 5. Démarrer
 
@@ -108,6 +127,8 @@ Toutes les commandes passent par le CLI du worker : `docker compose run --rm wor
 | `reconcile --hours 72` | redemande les webhooks manqués, sans attendre le passage automatique (toutes les 10 min) |
 | `secrets verify` | vérifie que chaque secret se déchiffre |
 | `master-key fingerprint` | affiche l'empreinte de la clé maître, à comparer avec la copie de secours |
+| `stop --all [--reason …]` | **arrêt d'urgence** : bloque tout nouveau démarrage, révoque les jetons, tue tous les sandboxes ; marche même si l'api est tombée |
+| `stop --lift` | lève l'arrêt d'urgence |
 
 ### Rotation de la clé maître
 

@@ -63,31 +63,27 @@ const handlers: Partial<Record<CapabilityName, Handler>> = {
   },
   set_plan: async (tx, ctx, input: { steps: string[] }, callId) => {
     const version = await nextVersion(tx, ctx.taskId, "plan");
-    await tx
-      .insert(artifacts)
-      .values({
-        orgId: ctx.orgId,
-        taskId: ctx.taskId,
-        runId: ctx.runId,
-        kind: "plan",
-        version,
-        content: input,
-      });
+    await tx.insert(artifacts).values({
+      orgId: ctx.orgId,
+      taskId: ctx.taskId,
+      runId: ctx.runId,
+      kind: "plan",
+      version,
+      content: input,
+    });
     await refreshStatus(tx, ctx, `plan:${callId}`);
     return `ok: plan v${version} publié (${input.steps.length} étapes)`;
   },
   ask_human: async (tx, ctx, input: { questions: string[] }) => {
     const version = await nextVersion(tx, ctx.taskId, "questions");
-    await tx
-      .insert(artifacts)
-      .values({
-        orgId: ctx.orgId,
-        taskId: ctx.taskId,
-        runId: ctx.runId,
-        kind: "questions",
-        version,
-        content: input,
-      });
+    await tx.insert(artifacts).values({
+      orgId: ctx.orgId,
+      taskId: ctx.taskId,
+      runId: ctx.runId,
+      kind: "questions",
+      version,
+      content: input,
+    });
     return "ok: questions enregistrées. Termine maintenant l'exécution ; elle reprendra quand l'humain aura répondu.";
   },
   run_checks: () =>
@@ -100,16 +96,14 @@ const handlers: Partial<Record<CapabilityName, Handler>> = {
     input: { summary: string; commitMessage: string; testsAdded: string[] },
   ) => {
     const version = await nextVersion(tx, ctx.taskId, "build");
-    await tx
-      .insert(artifacts)
-      .values({
-        orgId: ctx.orgId,
-        taskId: ctx.taskId,
-        runId: ctx.runId,
-        kind: "build",
-        version,
-        content: input,
-      });
+    await tx.insert(artifacts).values({
+      orgId: ctx.orgId,
+      taskId: ctx.taskId,
+      runId: ctx.runId,
+      kind: "build",
+      version,
+      content: input,
+    });
     return "ok: build soumise. Termine maintenant l'exécution : Jules exporte les commits, pousse la branche et ouvre la PR.";
   },
 };
@@ -221,7 +215,7 @@ export async function handleCapability(
 
   // L'identifiant de l'appel sert de clé d'idempotence aux effets qu'il déclenche.
   const callId = await record({ status: 200, decision, text: "" });
-  const handler = handlers[name] as Handler | undefined;
+  const handler = handlers[name];
   const text = handler ? await handler(tx, ctx, parsed.data as never, callId) : "ok";
   await tx
     .update(toolCalls)

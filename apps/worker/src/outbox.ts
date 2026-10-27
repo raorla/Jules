@@ -1,5 +1,21 @@
 import { appendAudit } from "@jules/audit";
-import { eq, installations, outbox, repos, sql, tasks, type DbOrTx } from "@jules/db";
+import {
+  and,
+  artifacts,
+  asc,
+  desc,
+  eq,
+  installations,
+  outbox,
+  repos,
+  runs,
+  sql,
+  tasks,
+  toolCalls,
+  type Db,
+  type DbOrTx,
+} from "@jules/db";
+import { pushBranch, remoteBranchSha, type RepoRef } from "@jules/forge";
 import { z } from "zod";
 import type { WorkerDeps } from "./deps.js";
 import { renderStatusComment, statusMarker } from "./messages.js";
@@ -13,6 +29,13 @@ export const MAX_EFFECT_ATTEMPTS = 10;
 
 const effectPayloads = {
   "github.status_comment": z.object({ taskId: z.uuid() }),
+  "git.push": z.object({
+    taskId: z.uuid(),
+    pristineDir: z.string(),
+    branch: z.string(),
+    sha: z.string(),
+  }),
+  "github.pull_request": z.object({ taskId: z.uuid() }),
 } as const;
 
 export type EffectKind = keyof typeof effectPayloads;
@@ -83,24 +106,66 @@ export function backoffSeconds(attempts: number): number {
 
 type Executor = (deps: WorkerDeps, row: OutboxRow) => Promise<Record<string, unknown>>;
 
+async function loadTask(db: Db, taskId: string) {
+  const [found] = await db
+    .select({ task: tasks, repo: repos, installation: installations })
+    .from(tasks)
+    .innerJoin(repos, eq(repos.id, tasks.repoId))
+    .innerJoin(installations, eq(installations.id, repos.installationId))
+    .where(eq(tasks.id, taskId));
+  if (!found || found.task.issueNumber === null) {
+    throw new Error(`tâche ${taskId} introuvable ou sans issue`);
+  }
+  const [owner, name] = found.repo.fullName.split("/") as [string, string];
+  const ref: RepoRef = {
+    installationId: found.installation.githubInstallationId,
+    owner,
+    repo: name,
+  };
+  return { ...found, ref, issueNumber: found.task.issueNumber };
+}
+
+async function latestArtifact(db: Db, taskId: string, kind: string) {
+  const [row] = await db
+    .select()
+    .from(artifacts)
+    .where(and(eq(artifacts.taskId, taskId), eq(artifacts.kind, kind)))
+    .orderBy(desc(artifacts.version))
+    .limit(1);
+  return row?.content;
+}
+
 const executors: Record<EffectKind, Executor> = {
   "github.status_comment": async ({ db, github, settings }, row) => {
     const { taskId } = effectPayloads["github.status_comment"].parse(row.payload);
-    const [found] = await db
-      .select({ task: tasks, repo: repos, installation: installations })
-      .from(tasks)
-      .innerJoin(repos, eq(repos.id, tasks.repoId))
-      .innerJoin(installations, eq(installations.id, repos.installationId))
-      .where(eq(tasks.id, taskId));
-    if (!found || found.task.issueNumber === null) {
-      throw new Error(`tâche ${taskId} introuvable ou sans issue`);
-    }
-    const { task, repo, installation } = found;
-    const [owner, name] = repo.fullName.split("/") as [string, string];
-    const ref = { installationId: installation.githubInstallationId, owner, repo: name };
-    const issueNumber = task.issueNumber as number;
+    const { task, ref, issueNumber } = await loadTask(db, taskId);
+    const plan = (await latestArtifact(db, taskId, "plan")) as { steps: string[] } | undefined;
+    const questions = (await latestArtifact(db, taskId, "questions")) as
+      { questions: string[] } | undefined;
+    const updates = await db
+      .select({ input: toolCalls.input })
+      .from(toolCalls)
+      .innerJoin(runs, eq(runs.id, toolCalls.runId))
+      .where(
+        and(
+          eq(runs.taskId, taskId),
+          eq(toolCalls.capability, "post_update"),
+          eq(toolCalls.effect, "allow"),
+        ),
+      )
+      .orderBy(asc(toolCalls.createdAt));
     // On affiche l'état courant de la tâche : rejouer un effet ancien ne remet pas un état périmé.
-    const body = renderStatusComment(task, settings.language);
+    const body = renderStatusComment(
+      {
+        task,
+        ...(plan ? { plan: plan.steps } : {}),
+        ...(questions ? { questions: questions.questions } : {}),
+        updates: updates
+          .map((u) => (u.input as { message?: string }).message ?? "")
+          .filter(Boolean),
+      },
+      settings.language,
+    );
 
     if (
       task.statusCommentId !== null &&
@@ -122,7 +187,69 @@ const executors: Record<EffectKind, Executor> = {
     await db.update(tasks).set({ statusCommentId: commentId }).where(eq(tasks.id, task.id));
     return { commentId, operation };
   },
+
+  "git.push": async ({ db, github }, row) => {
+    const payload = effectPayloads["git.push"].parse(row.payload);
+    const { ref } = await loadTask(db, payload.taskId);
+    const token = await github.getRepoToken(ref, { contents: "write" });
+    const url = github.cloneUrl(ref);
+    // Idempotent : si la branche distante est déjà à ce SHA, il n'y a rien à faire.
+    if ((await remoteBranchSha(url, payload.branch, token)) === payload.sha) {
+      return { branch: payload.branch, sha: payload.sha, operation: "already_pushed" };
+    }
+    await pushBranch(payload.pristineDir, url, payload.branch, token);
+    return { branch: payload.branch, sha: payload.sha, operation: "pushed" };
+  },
+
+  "github.pull_request": async ({ db, github }, row) => {
+    const { taskId } = effectPayloads["github.pull_request"].parse(row.payload);
+    const { task, repo, ref, issueNumber } = await loadTask(db, taskId);
+    if (!task.branch) {
+      throw new Error(`tâche ${taskId} sans branche`);
+    }
+    // Une PR déjà ouverte pour cette branche est retrouvée au lieu d'être recréée (§17).
+    const pr =
+      (await github.findPullRequest(ref, task.branch)) ??
+      (await github.createPullRequest(ref, {
+        head: task.branch,
+        base: repo.defaultBranch ?? "main",
+        draft: true,
+        ...pullRequestText(
+          task,
+          issueNumber,
+          (await latestArtifact(db, taskId, "build")) as BuildContent | undefined,
+        ),
+      }));
+    await db.update(tasks).set({ prNumber: pr.number, prUrl: pr.url }).where(eq(tasks.id, taskId));
+    return { number: pr.number, url: pr.url };
+  },
 };
+
+type BuildContent = { summary: string; commitMessage: string; testsAdded: string[] };
+
+function pullRequestText(
+  task: { id: string; title: string },
+  issueNumber: number,
+  build: BuildContent | undefined,
+) {
+  const tests = build?.testsAdded.length
+    ? build.testsAdded.map((t) => `- \`${t}\``).join("\n")
+    : "_aucun déclaré_";
+  return {
+    title: build?.commitMessage ?? task.title,
+    body: [
+      build?.summary ?? "",
+      "",
+      "### Tests ajoutés",
+      tests,
+      "",
+      "---",
+      `Tâche Jules \`${task.id.slice(0, 8)}\` · issue #${issueNumber}`,
+      "",
+      "<sub>Préparée par Jules. Elle attend la review d'un humain : Jules ne merge jamais.</sub>",
+    ].join("\n"),
+  };
+}
 
 /** Exécute les effets en attente jusqu'à ce qu'il n'y en ait plus. Renvoie le nombre traité. */
 export async function drainOutbox(deps: WorkerDeps): Promise<number> {

@@ -124,7 +124,9 @@ function model(body: object, as = token): Promise<{ status: number; text: string
       (res) => {
         let text = "";
         res.on("data", (c: Buffer) => (text += c.toString()));
-        res.on("end", () => resolve({ status: res.statusCode ?? 0, text }));
+        res.on("end", () => {
+          resolve({ status: res.statusCode ?? 0, text });
+        });
       },
     );
     req.on("error", reject);

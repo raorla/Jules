@@ -44,9 +44,28 @@ export interface GitHubApp {
   createIssueComment(ref: RepoRef, issueNumber: number, body: string): Promise<{ id: number }>;
   /** `false` si le commentaire n'existe plus. */
   updateIssueComment(ref: RepoRef, commentId: number, body: string): Promise<boolean>;
+  /** URL de clone, sans identifiant : le jeton passe par GIT_ASKPASS. */
+  cloneUrl(ref: RepoRef): string;
+  /** Jeton d'installation limité à ce repo et à ces permissions. Il reste dans la mémoire du worker. */
+  getRepoToken(ref: RepoRef, permissions: Permissions): Promise<string>;
+  findPullRequest(ref: RepoRef, head: string): Promise<PullRequest | undefined>;
+  createPullRequest(ref: RepoRef, pr: NewPullRequest): Promise<PullRequest>;
 }
 
-type Permissions = Record<string, "read" | "write">;
+export type PullRequest = {
+  readonly number: number;
+  readonly url: string;
+  readonly draft: boolean;
+};
+export type NewPullRequest = {
+  head: string;
+  base: string;
+  title: string;
+  body: string;
+  draft: boolean;
+};
+
+export type Permissions = Record<string, "read" | "write">;
 
 function isNotFound(error: unknown): boolean {
   return typeof error === "object" && error !== null && "status" in error && error.status === 404;
@@ -61,14 +80,41 @@ export class OctokitGitHubApp implements GitHubApp {
     this.#app = new App({ appId: options.appId, privateKey: options.privateKey });
   }
 
-  async #installation(ref: RepoRef, permissions: Permissions): Promise<Octokit> {
+  async getRepoToken(ref: RepoRef, permissions: Permissions): Promise<string> {
     const auth = (await this.#app.octokit.auth({
       type: "installation",
       installationId: ref.installationId,
       repositoryNames: [ref.repo],
       permissions,
     })) as { token: string };
-    return new Octokit({ auth: auth.token });
+    return auth.token;
+  }
+
+  async #installation(ref: RepoRef, permissions: Permissions): Promise<Octokit> {
+    return new Octokit({ auth: await this.getRepoToken(ref, permissions) });
+  }
+
+  cloneUrl(ref: RepoRef): string {
+    return `https://github.com/${ref.owner}/${ref.repo}.git`;
+  }
+
+  async findPullRequest(ref: RepoRef, head: string): Promise<PullRequest | undefined> {
+    const octokit = await this.#installation(ref, { pull_requests: "read" });
+    const { data } = await octokit.rest.pulls.list({
+      owner: ref.owner,
+      repo: ref.repo,
+      head: `${ref.owner}:${head}`,
+      state: "all",
+      per_page: 10,
+    });
+    const pr = data[0];
+    return pr ? { number: pr.number, url: pr.html_url, draft: pr.draft ?? false } : undefined;
+  }
+
+  async createPullRequest(ref: RepoRef, pr: NewPullRequest): Promise<PullRequest> {
+    const octokit = await this.#installation(ref, { pull_requests: "write" });
+    const { data } = await octokit.rest.pulls.create({ owner: ref.owner, repo: ref.repo, ...pr });
+    return { number: data.number, url: data.html_url, draft: data.draft ?? false };
   }
 
   async getApp(): Promise<AppInfo> {

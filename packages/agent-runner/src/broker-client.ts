@@ -56,5 +56,9 @@ export function startSocketRelay(socketPath: string, port: number): Promise<Serv
     client.on("error", close);
     upstream.on("error", close);
   });
-  return new Promise((resolve) => server.listen(port, "127.0.0.1", () => resolve(server)));
+  return new Promise((resolve) =>
+    server.listen(port, "127.0.0.1", () => {
+      resolve(server);
+    }),
+  );
 }

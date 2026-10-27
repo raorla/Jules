@@ -86,11 +86,22 @@ export function createEgressProxy(options: EgressProxyOptions): Server {
         upstreamRes.pipe(res);
       },
     );
-    upstream.on("error", () => res.writeHead(502).end());
+    upstream.on("error", () => {
+      if (!res.headersSent) {
+        res.writeHead(502);
+      }
+      res.end();
+    });
+    req.on("error", () => upstream.destroy());
     req.pipe(upstream);
+  });
+  server.on("clientError", (_error, socket) => {
+    socket.destroy();
   });
 
   server.on("connect", (req: IncomingMessage, client: Socket, head: Buffer) => {
+    // Sans ce gestionnaire, un client qui coupe après un refus ferait tomber le proxy entier.
+    client.on("error", () => client.destroy());
     const target = splitHostPort(req.url ?? "", 443);
     if (!target || !check(target.host, target.port, "CONNECT")) {
       client.end(

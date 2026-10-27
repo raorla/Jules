@@ -2,10 +2,12 @@
 import { verifyAuditChain } from "@jules/audit";
 import { DEFAULT_ORG_ID, createDatabase, migrate, orgs, secrets } from "@jules/db";
 import { OctokitGitHubApp } from "@jules/forge";
+import { SandboxDriver } from "@jules/sandbox";
 import { SecretStore, generateMasterKey, keyringFromEnv, parseMasterKey } from "@jules/secrets";
 import { parseArgs } from "node:util";
 import { GITHUB_APP_KEY_SECRET, loadBaseEnv, loadSecretsEnv, loadWorkerEnv } from "./config.js";
 import { createLogger } from "./logger.js";
+import { liftStop, stopAll } from "./emergency.js";
 import { reconcileDeliveries } from "./reconcile.js";
 
 // Commandes d'exploitation du serveur (`jules …`). Elles marchent sans l'api.
@@ -21,6 +23,8 @@ const USAGE = `usage : jules <commande>
                                (l'ancienne clé dans JULES_MASTER_KEY_PREVIOUS)
   audit verify                 vérifie la chaîne du journal d'audit de chaque organisation
   reconcile [--hours <n>]      redemande à GitHub les webhooks manqués (72 h maximum)
+  stop --all [--reason <r>]    arrêt d'urgence : bloque tout, révoque les jetons, tue les sandboxes
+  stop --lift                  lève l'arrêt d'urgence
 `;
 
 async function readStdin(): Promise<Buffer> {
@@ -52,7 +56,13 @@ async function main(argv: string[]): Promise<number> {
   const { positionals, values } = parseArgs({
     args: argv,
     allowPositionals: true,
-    options: { hours: { type: "string" }, help: { type: "boolean", short: "h" } },
+    options: {
+      hours: { type: "string" },
+      help: { type: "boolean", short: "h" },
+      all: { type: "boolean" },
+      lift: { type: "boolean" },
+      reason: { type: "string" },
+    },
   });
   const [command, sub, arg] = positionals;
 
@@ -143,6 +153,28 @@ async function main(argv: string[]): Promise<number> {
         }
       }
       return ok ? 0 : 2;
+    });
+  }
+
+  if (command === "stop" && (values.all || values.lift)) {
+    const env = loadBaseEnv();
+    return withDatabase(env.DATABASE_URL, async ({ db }) => {
+      if (values.lift) {
+        const lifted = await liftStop(db, { orgId: DEFAULT_ORG_ID, actorId: "cli" });
+        process.stdout.write(`${lifted} arrêt(s) levé(s)\n`);
+        return 0;
+      }
+      const started = Date.now();
+      const report = await stopAll(db, new SandboxDriver({ runtime: "runsc", egressImage: "-" }), {
+        orgId: DEFAULT_ORG_ID,
+        reason: values.reason ?? "jules stop --all",
+        actorId: "cli",
+      });
+      process.stdout.write(
+        `arrêt d'urgence actif : ${report.killedContainers} conteneur(s) tué(s), ${report.revokedTokens} jeton(s) révoqué(s) en ${Date.now() - started} ms\n` +
+          "Rien ne redémarre tant que l'arrêt n'est pas levé (jules stop --lift).\n",
+      );
+      return 0;
     });
   }
 

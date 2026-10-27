@@ -58,12 +58,33 @@ services:
       GITHUB_APP_ID: ${GITHUB_APP_ID:?GITHUB_APP_ID manquant dans deploy/.env}
       JULES_MENTION: ${JULES_MENTION:-@jules}
       JULES_LANGUAGE: ${JULES_LANGUAGE:-fr}
+      JULES_RUNS_DIR: /var/lib/jules/runs
+      JULES_SANDBOX_RUNTIME: ${JULES_SANDBOX_RUNTIME:-runsc}
+      JULES_SANDBOX_IMAGE: jules-sandbox-node:${JULES_VERSION:-local}
+      JULES_EGRESS_IMAGE: jules-egress:${JULES_VERSION:-local}
+      JULES_EGRESS_ALLOW: ${JULES_EGRESS_ALLOW:-registry.npmjs.org}
     secrets: [database_url, jules_master_key]
+    # Le driver crée les sandboxes par l'API Docker. Le dossier des exécutions est monté au même
+    # chemin que sur l'hôte : Docker résout les montages des sandboxes côté hôte.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/jules/runs:/var/lib/jules/runs
+    group_add: ["${DOCKER_GID:?DOCKER_GID manquant dans deploy/.env (getent group docker)}"]
     depends_on:
       migrate: { condition: service_completed_successfully }
-    # `egress` : sortie vers api.github.com. Le worker n'est joignable par aucun autre service.
+    # `egress` : sortie vers api.github.com et api.anthropic.com. Le worker n'est joignable par aucun autre service.
     networks: [db, egress]
     <<: *hardening
+
+  # Images lancées par le worker, une par exécution : construites avec `--profile images build`.
+  sandbox-image:
+    image: jules-sandbox-node:${JULES_VERSION:-local}
+    build: { context: .., dockerfile: deploy/Dockerfile, target: sandbox-node }
+    profiles: [images]
+  egress-image:
+    image: jules-egress:${JULES_VERSION:-local}
+    build: { context: .., dockerfile: deploy/Dockerfile, target: egress }
+    profiles: [images]
 
   # Exposition du gateway en TLS : Caddy (domaine public) ou Cloudflare Tunnel (aucun port ouvert).
   caddy:

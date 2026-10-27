@@ -33,8 +33,10 @@
   "devDependencies": {
     "@jules/agent-runner": "workspace:*",
     "@jules/gateway": "workspace:*",
+    "@types/dockerode": "4.0.2",
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
+    "dockerode": "5.0.1",
     "typescript": "6.0.3",
     "vitest": "5.0.5"
   }

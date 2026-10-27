@@ -33,6 +33,7 @@ export type RunSpec = {
   runId: string;
   image: string;
   command?: string[];
+  entrypoint?: string[];
   env?: Record<string, string>;
   mounts?: readonly Mount[];
   /** `egress` : réseau propre + proxy avec allowlist. `none` : aucun réseau (export des commits). */
@@ -140,7 +141,11 @@ export class SandboxDriver {
           .connect({ Container: egress.id });
         await egress.start();
 
-        const proxy = `http://${EGRESS_ALIAS}:${EGRESS_PORT}`;
+        // Par son IP : dans un réseau interne isolé, la résolution DNS de l'alias n'est pas fiable
+        // (getaddrinfo EAI_AGAIN pour Node), alors que l'IP ne demande aucune résolution.
+        const inspected = await egress.inspect();
+        const egressIp = inspected.NetworkSettings.Networks[networkMode]?.IPAddress;
+        const proxy = `http://${egressIp || EGRESS_ALIAS}:${EGRESS_PORT}`;
         Object.assign(env, {
           HTTP_PROXY: proxy,
           HTTPS_PROXY: proxy,
@@ -151,12 +156,15 @@ export class SandboxDriver {
         });
       }
 
+      const user = spec.user ?? "1000:1000";
+      const [uid = "1000", gid = uid] = user.split(":");
       const container = await this.#docker.createContainer({
         Image: spec.image,
         name: `jules-sandbox-${spec.runId}`,
         ...(spec.command ? { Cmd: spec.command } : {}),
+        ...(spec.entrypoint ? { Entrypoint: spec.entrypoint } : {}),
         Env: Object.entries(env).map(([k, v]) => `${k}=${v}`),
-        User: spec.user ?? "1000:1000",
+        User: user,
         WorkingDir: spec.workdir ?? "/workspace",
         Labels: { ...labels, "jules.role": "sandbox" },
         HostConfig: {
@@ -166,7 +174,11 @@ export class SandboxDriver {
             (m) => `${m.source}:${m.target}:${m.readOnly ? "ro" : "rw"}`,
           ),
           ReadonlyRootfs: true,
-          Tmpfs: { "/tmp": "rw,nosuid,nodev,size=1g", "/home/node": "rw,nosuid,nodev,size=512m" },
+          // Sans uid/gid, un tmpfs appartient à root : l'utilisateur du sandbox ne pourrait pas y écrire.
+          Tmpfs: {
+            "/tmp": "rw,nosuid,nodev,size=1g,mode=1777",
+            "/home/node": `rw,nosuid,nodev,size=512m,mode=0700,uid=${uid},gid=${gid}`,
+          },
           CapDrop: ["ALL"],
           SecurityOpt: ["no-new-privileges:true"],
           PidsLimit: limits.pids,
@@ -185,9 +197,7 @@ export class SandboxDriver {
       const { StatusCode } = (await container.wait()) as { StatusCode: number };
       clearTimeout(timer);
 
-      const logs = demuxLogs(
-        (await container.logs({ stdout: true, stderr: true })) as unknown as Buffer,
-      );
+      const logs = demuxLogs(await container.logs({ stdout: true, stderr: true }));
       const egress = egressContainer ? await this.#egressDecisions(egressContainer) : [];
       return {
         exitCode: StatusCode,
@@ -205,9 +215,7 @@ export class SandboxDriver {
   }
 
   async #egressDecisions(container: Docker.Container): Promise<EgressDecision[]> {
-    const raw = demuxLogs(
-      (await container.logs({ stdout: true, stderr: false })) as unknown as Buffer,
-    );
+    const raw = demuxLogs(await container.logs({ stdout: true, stderr: false }));
     return raw
       .split("\n")
       .filter((line) => line.startsWith("{"))

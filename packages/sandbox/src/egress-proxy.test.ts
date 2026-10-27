@@ -68,7 +68,9 @@ describe("proxy", () => {
         (res) => {
           let body = "";
           res.on("data", (c: Buffer) => (body += c.toString()));
-          res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+          res.on("end", () => {
+            resolve({ status: res.statusCode ?? 0, body });
+          });
         },
       );
       req.on("error", reject);
@@ -81,11 +83,22 @@ describe("proxy", () => {
 
   it.each([
     ["un hôte hors allowlist", "example.com:443"],
-    ["une IP littérale", `127.0.0.1:${targetPort}`],
+    ["une IP littérale", "93.184.215.14:443"],
     ["un port non autorisé", "localhost:22"],
   ])("refuse %s et le journalise", async (_, authority) => {
     expect(await tunnel(authority)).toBe("HTTP/1.1 403 Forbidden");
     expect(decisions.at(-1)).toMatchObject({ allowed: false, method: "CONNECT" });
+  });
+
+  it("survit à un client qui coupe brutalement après un refus", async () => {
+    await new Promise<void>((resolve) => {
+      const socket = connect(proxyPort, "127.0.0.1", () => {
+        socket.write("CONNECT example.com:443 HTTP/1.1\r\n\r\n");
+        socket.resetAndDestroy();
+        setTimeout(resolve, 100);
+      });
+    });
+    expect(await tunnel(`localhost:${targetPort}`)).toBe("HTTP/1.1 200 Connection Established");
   });
 
   it("relaie le HTTP en clair autorisé et refuse le reste", async () => {

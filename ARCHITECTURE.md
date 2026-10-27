@@ -228,7 +228,7 @@ C'est le seul chemin vers Internet depuis les sandboxes. Il fonctionne avec une 
 | Clé maître de chiffrement | variable d'environnement ou KMS du worker ; trousseau du système en mode local | package `secrets` | base de données |
 | Jeton d'exécution | worker et sandbox | agent → broker | après la fin de l'exécution (révoqué) |
 
-Le jeton d'installation est passé à git par un credential helper éphémère, via stdin. Il n'est jamais écrit dans `.git/config` ni sur une ligne de commande.
+Le jeton d'installation est passé à git par `GIT_ASKPASS`, dans une variable d'environnement propre au seul processus git. Il n'est jamais écrit dans `.git/config` ni sur une ligne de commande, et il est masqué dans les messages d'erreur.
 
 ## 6. Types d'agents et rôles
 
@@ -360,7 +360,8 @@ Un conteneur est créé pour chaque exécution, puis détruit.
   - seccomp par défaut ;
   - racine en lecture seule (`--read-only`), avec `/tmp` et `$HOME` en tmpfs.
 - **Limites** : CPU, mémoire, `--pids-limit`, taille du workspace, durée maximale (au-delà, le driver tue le conteneur).
-- **Réseau** : un réseau Docker interne par exécution, sans route par défaut. Seuls le broker et l'egress proxy y sont joignables : pas Postgres, pas le gateway, pas l'api, pas l'hôte, pas les serveurs gérés.
+- **Réseau** : un réseau Docker interne par exécution, sans route par défaut et sans passerelle vers l'hôte (`gateway_mode_ipv4=isolated` ; un réseau `internal` ordinaire laisse joindre l'hôte sur son IP de bridge). Seul l'egress proxy de l'exécution y est joignable, par son IP : pas Postgres, pas le gateway, pas l'api, pas l'hôte, pas les serveurs gérés.
+- **Broker** : il n'est pas sur le réseau. Le sandbox le joint par un socket Unix propre à l'exécution, monté dans `/run/jules/` (gVisor : `--host-uds=open`). L'agent-runner relaie `ANTHROPIC_BASE_URL` (`127.0.0.1`) vers ce socket.
 - **Montages** :
   - le workspace du repo, en `rw` pour le développeur et en `ro` pour les autres rôles ;
   - le cache de dépendances du repo ;

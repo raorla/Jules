@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Milestone **M0 (foundations) is implemented**: a pnpm + Turborepo monorepo with the gateway, the worker, and the `db`, `audit`, `secrets`, `forge` and `config` packages. M1 (sandbox, broker, agent runner) is next. The design documents are written in French; keep that language when editing them, and use French for user-facing strings and code comments, matching the existing code.
+Milestones **M0 (foundations) and M1 (sandbox, broker, end-to-end skeleton) are implemented**: issue → developer agent in a gVisor sandbox → push → draft PR. M2 (state machine, phases 1–3, human gates) is next. The design documents are written in French; keep that language when editing them, and use French for user-facing strings and code comments, matching the existing code.
 
 | File | Role |
 |---|---|
@@ -51,8 +51,11 @@ pnpm typecheck                          # tsc per package, no build needed
 pnpm lint                               # ESLint (type-aware) + Prettier check
 pnpm build                              # tsc to dist/, in dependency order
 pnpm db:generate                        # migration from packages/db/src/schema.ts
-pnpm jules --help                       # operations CLI (migrate, secrets, audit verify, reconcile)
+pnpm jules --help                       # operations CLI (migrate, secrets, audit verify, reconcile, stop --all)
+JULES_TEST_SKIP_BUILD=1 pnpm --filter @jules/worker exec vitest run test/sandbox-e2e.test.ts  # reuse built test images
 ```
+
+The worker's sandbox tests build `jules-sandbox-node:test` and `jules-egress:test` from `deploy/Dockerfile` (cached by Docker) and run the real Claude Code binary against a scripted fake model (`apps/worker/test/fake-model.ts`). They use `runc` locally; set `JULES_SANDBOX_RUNTIME=runsc` where gVisor is installed.
 
 ## Code layout and conventions
 
@@ -60,6 +63,11 @@ pnpm jules --help                       # operations CLI (migrate, secrets, audi
 - ESM with `nodenext`: relative imports end in `.js`. TypeScript is pinned to 6.0.x because typescript-eslint does not support 7 yet.
 - `apps/gateway`: Fastify app that verifies the HMAC, dedups on `X-GitHub-Delivery`, stores into `events` and answers 202. It holds only the webhook secret.
 - `apps/worker`: `inbox.ts` (claims events, network reads first, then one transaction writing task + outbox + audit + event status), `outbox.ts` (idempotent effect executors, ordered per `serial_key`), `reconcile.ts` (redelivers GitHub deliveries missing from `events`), `worker.ts` (LISTEN/NOTIFY loop plus slow polling; refuses to start if the GitHub App has a forbidden permission), `cli.ts` (`jules` CLI).
+- `apps/worker/src/broker/`: one Fastify server per run on a Unix socket mounted into that run's sandbox (`/run/jules/broker.sock`); `capabilities.ts` (zod validation, limits, `policy.decide`, tool_calls + audit in one transaction) and `model-proxy.ts` (swaps the run token for the real key, counts tokens and cost, enforces the budget, masks secrets, detects provider outages).
+- `apps/worker/src/orchestrator.ts`: claims a task, clones a worker-only "pristine" bare repo, runs the sandbox, exports commits with `git bundle` in a network-less container, checks `policy.decide({action:"push"})`, then writes push + draft PR + status effects in one transaction. `recover()` handles crashes.
+- `packages/sandbox`: Docker driver (per-run internal network with `gateway_mode_ipv4=isolated`, hardened container, per-run egress proxy reached by IP) and the dependency-free egress proxy.
+- `packages/agent-runner`: sandbox entrypoint; Agent SDK `query()` with `settingSources: []`, `strictMcpConfig`, an `env` that replaces everything, and the in-process `jules` MCP server that forwards to the broker.
+- `packages/policy` (pure, 100% coverage enforced) and `packages/artifacts` (zod schemas shared by broker and agent-runner). Prompts live in `prompts/<role>/vN.md`.
 - `packages/forge`: the `GitHubApp` port, the Octokit implementation (installation tokens scoped to the repo and permissions of each call), and `FakeGitHub` in `@jules/forge/testing`, which delivers real signed webhooks over HTTP.
 - Tests that touch the database use `startTestDatabase()` from `@jules/db/testing`, never a mock. `audit_log` is append-only, so tests filter it by target instead of truncating it.
-- Still to come, as planned in ARCHITECTURE.md §21: `apps/api`, `apps/web`, `apps/desktop`, and the `workflow`, `policy` and `risk` packages. Those three are **pure** and need 100% coverage. Also planned: `prompts/<role>/vN.md`, `evals/` and `images/`. In Jules's own repo, `packages/policy`, `packages/workflow`, `packages/risk` and `prompts/` are high-risk paths (WORKFLOW.md §11), and any change to a prompt, model or rule must pass the eval suite first.
+- Still to come, as planned in ARCHITECTURE.md §21: `apps/api`, `apps/web`, `apps/desktop`, and the `workflow` and `risk` packages, which are **pure** and need 100% coverage like `policy`. Also planned: `evals/`. In Jules's own repo, `packages/policy`, `packages/workflow`, `packages/risk` and `prompts/` are high-risk paths (WORKFLOW.md §11), and any change to a prompt, model or rule must pass the eval suite first.

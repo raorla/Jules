@@ -4,6 +4,7 @@ import pg from "pg";
 import type { WorkerDeps } from "./deps.js";
 import { drainEvents } from "./inbox.js";
 import { drainOutbox } from "./outbox.js";
+import type { Orchestrator } from "./orchestrator.js";
 import { GITHUB_DELIVERY_RETENTION_MS, reconcileDeliveries } from "./reconcile.js";
 
 // Boucle du worker. LISTEN/NOTIFY réveille le traitement dès qu'un événement ou un effet arrive ;
@@ -11,6 +12,8 @@ import { GITHUB_DELIVERY_RETENTION_MS, reconcileDeliveries } from "./reconcile.j
 
 export type WorkerOptions = {
   databaseUrl: string;
+  /** Sans orchestrateur (M0), le worker traite les événements et les effets seulement. */
+  orchestrator?: Orchestrator;
   pollMs?: number;
   reconcileEveryMs?: number;
   reconcileLookbackMs?: number;
@@ -23,27 +26,36 @@ export class AppSetupError extends Error {
   }
 }
 
+type LoopName = "events" | "outbox" | "tasks";
 type Loop = { running: boolean; again: boolean; run: () => Promise<number> };
 
 export class Worker {
   readonly #deps: WorkerDeps;
-  readonly #options: Required<WorkerOptions>;
-  readonly #loops: Record<"events" | "outbox", Loop>;
+  readonly #options: Required<Omit<WorkerOptions, "orchestrator">>;
+  readonly #orchestrator: Orchestrator | undefined;
+  readonly #loops: Record<LoopName, Loop>;
   readonly #timers: NodeJS.Timeout[] = [];
   #listener: pg.Client | undefined;
   #stopped = false;
 
   constructor(deps: WorkerDeps, options: WorkerOptions) {
     this.#deps = deps;
+    const { orchestrator, ...rest } = options;
     this.#options = {
       pollMs: 5_000,
       reconcileEveryMs: 10 * 60_000,
       reconcileLookbackMs: 6 * 3600_000,
-      ...options,
+      ...rest,
     };
+    this.#orchestrator = orchestrator;
     this.#loops = {
       events: { running: false, again: false, run: () => drainEvents(deps) },
       outbox: { running: false, again: false, run: () => drainOutbox(deps) },
+      tasks: {
+        running: false,
+        again: false,
+        run: () => (orchestrator ? orchestrator.drainTasks() : Promise.resolve(0)),
+      },
     };
   }
 
@@ -52,18 +64,37 @@ export class Worker {
     await this.#listen();
     // Au démarrage, on remonte tout l'historique gardé par GitHub : rattrape une panne du gateway.
     await this.reconcile(GITHUB_DELIVERY_RETENTION_MS);
+    // Reprise après crash : exécutions orphelines arrêtées, tâches au bail expiré relancées.
+    await this.#recover();
     this.#kick("events");
     this.#kick("outbox");
+    this.#kick("tasks");
     this.#timers.push(
       setInterval(() => {
         this.#kick("events");
         this.#kick("outbox");
+        this.#kick("tasks");
       }, this.#options.pollMs),
+      setInterval(() => void this.#recover(), 60_000),
       setInterval(
         () => void this.reconcile(this.#options.reconcileLookbackMs),
         this.#options.reconcileEveryMs,
       ),
     );
+  }
+
+  async #recover(): Promise<void> {
+    try {
+      const recovered = (await this.#orchestrator?.recover()) ?? 0;
+      if (recovered > 0) {
+        this.#deps.log.warn({ recovered }, "reprise après redémarrage");
+      }
+    } catch (error) {
+      this.#deps.log.error(
+        { err: error instanceof Error ? error.message : String(error) },
+        "reprise impossible",
+      );
+    }
   }
 
   /** Refuse de démarrer si l'App a une permission interdite (ARCHITECTURE.md §12). */
@@ -91,7 +122,7 @@ export class Worker {
     }
   }
 
-  #kick(name: "events" | "outbox"): void {
+  #kick(name: LoopName): void {
     const loop = this.#loops[name];
     if (this.#stopped) {
       return;
@@ -106,9 +137,10 @@ export class Worker {
         loop.again = false;
         try {
           const processed = await loop.run();
-          // Un événement traité produit souvent un effet : on enchaîne sans attendre la notification.
+          // Un événement traité produit souvent un effet et une tâche : on enchaîne sans attendre.
           if (processed > 0 && name === "events") {
             this.#kick("outbox");
+            this.#kick("tasks");
           }
         } catch (error) {
           this.#deps.log.error(

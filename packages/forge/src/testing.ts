@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { REQUIRED_EVENTS, REQUIRED_PERMISSIONS, type AppInfo } from "./app-setup.js";
-import type { GitHubApp, HookDelivery, RepoRef, RepoRole } from "./github.js";
+import type {
+  GitHubApp,
+  HookDelivery,
+  NewPullRequest,
+  PullRequest,
+  RepoRef,
+  RepoRole,
+} from "./github.js";
 import { signWebhook } from "./webhooks.js";
 
 // GitHub en mémoire pour les tests : livre de vrais webhooks signés en HTTP, garde l'historique
@@ -17,6 +24,9 @@ export type FakeComment = {
 
 export class FakeGitHub implements GitHubApp {
   readonly comments: FakeComment[] = [];
+  readonly pullRequests: (PullRequest & NewPullRequest & { repo: string })[] = [];
+  /** Dépôts git locaux qui jouent le rôle de GitHub : `owner/repo` → chemin d'un dépôt nu. */
+  readonly remotes = new Map<string, string>();
   /** Configuration de l'App, conforme par défaut ; un test peut la modifier. */
   app: AppInfo = {
     slug: "jules",
@@ -145,6 +155,38 @@ export class FakeGitHub implements GitHubApp {
       comment.body = body;
     }
     return Promise.resolve(comment !== undefined);
+  }
+
+  cloneUrl(ref: RepoRef): string {
+    const remote = this.remotes.get(`${ref.owner}/${ref.repo}`);
+    if (!remote) {
+      throw new Error(`aucun dépôt local pour ${ref.owner}/${ref.repo}`);
+    }
+    return remote;
+  }
+
+  async getRepoToken(): Promise<string> {
+    this.#maybeFail("getRepoToken");
+    await Promise.resolve();
+    return "ghs_fauxjetondinstallationpourlestests0000";
+  }
+
+  async findPullRequest(ref: RepoRef, head: string) {
+    await Promise.resolve();
+    return this.pullRequests.find((p) => p.repo === `${ref.owner}/${ref.repo}` && p.head === head);
+  }
+
+  async createPullRequest(ref: RepoRef, pr: NewPullRequest) {
+    this.#maybeFail("createPullRequest");
+    await Promise.resolve();
+    const created = {
+      ...pr,
+      repo: `${ref.owner}/${ref.repo}`,
+      number: this.#nextId++,
+      url: `https://github.com/${ref.owner}/${ref.repo}/pull/x`,
+    };
+    this.pullRequests.push(created);
+    return created;
   }
 
   /** Commentaire laissé par une personne (par exemple pour tenter de recopier un marqueur). */

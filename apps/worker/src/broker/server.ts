@@ -19,7 +19,12 @@ export type BrokerDeps = {
   model: { upstream: string; apiKey: string; fetchImpl?: typeof fetch };
   /** Appelé quand le budget de l'exécution est atteint : le worker tue le sandbox. */
   onBudgetExceeded: (runId: string) => void;
+  /** Appelé après plusieurs erreurs consécutives du fournisseur : la tâche passera en `waiting_provider`. */
+  onProviderOutage?: (runId: string) => void;
 };
+
+/** Erreurs consécutives du fournisseur au-delà desquelles l'exécution est suspendue (§17). */
+export const PROVIDER_OUTAGE_THRESHOLD = 3;
 
 export type Broker = { close(): Promise<void> };
 
@@ -50,6 +55,7 @@ export async function startBroker(
   options: { runId: string; socketPath: string },
 ): Promise<Broker> {
   const { db, log } = deps;
+  let consecutiveProviderErrors = 0;
   const app = Fastify({ logger: false, bodyLimit: MAX_BODY_BYTES });
   app.removeAllContentTypeParsers();
   app.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => {
@@ -156,6 +162,14 @@ export async function startBroker(
     );
     if (updated && Number(updated.costUsd) >= Number(updated.budgetUsd)) {
       deps.onBudgetExceeded(auth.run.id);
+    }
+    consecutiveProviderErrors = accounting.providerError ? consecutiveProviderErrors + 1 : 0;
+    if (consecutiveProviderErrors >= PROVIDER_OUTAGE_THRESHOLD) {
+      log.warn(
+        { runId: auth.run.id, consecutiveProviderErrors },
+        "fournisseur de modèle indisponible",
+      );
+      deps.onProviderOutage?.(auth.run.id);
     }
     reply.raw.end();
   });

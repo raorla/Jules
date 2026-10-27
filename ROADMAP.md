@@ -103,6 +103,8 @@ Sur un repo de test, puis sur 2 ou 3 de tes vrais repos : une issue `@jules` dev
 
 ### M1 — Sandbox, broker et squelette de bout en bout (L)
 
+> Statut (27/10/2026) : code livré. La DoD est couverte par des tests automatisés : le vrai binaire Claude Code tourne dans le sandbox face à un faux fournisseur de modèle. Les tests tournent avec `runc` sur la machine de développement. Restent l'essai avec gVisor sur le serveur et le refus d'un push de workflow par GitHub, sur le vrai GitHub (côté Jules, ce push est déjà refusé par la policy).
+
 **Livrables**
 - `packages/sandbox` : conteneurs gVisor durcis ([ARCHITECTURE.md §8](ARCHITECTURE.md#8-sandbox)), un réseau interne par exécution, destruction garantie.
 - L'egress proxy avec son allowlist.

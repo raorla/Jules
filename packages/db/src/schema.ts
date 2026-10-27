@@ -156,6 +156,10 @@ export const tasks = pgTable(
     baseSha: text("base_sha"),
     headSha: text("head_sha"),
     prNumber: integer("pr_number"),
+    prUrl: text("pr_url"),
+    /** Bail de l'exécution en cours : expiré, la tâche est reprise après un crash du worker. */
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    attempts: integer("attempts").notNull().default(0),
     budgetUsd: numeric("budget_usd", { precision: 12, scale: 4 }),
     /** En `waiting_provider` : date de la prochaine tentative (ARCHITECTURE.md §17). */
     resumeAfter: timestamp("resume_after", { withTimezone: true }),
