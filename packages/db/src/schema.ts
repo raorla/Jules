@@ -809,3 +809,87 @@ export const desktopLogins = pgTable("desktop_logins", {
   usedAt: timestamp("used_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
+
+// Forge locale (M10, ARCHITECTURE.md §11) : le mode local du desktop travaille sur des dossiers git,
+// sans GitHub. Issues, demandes de merge, commentaires, reviews et checks vivent ici.
+
+/** Dossier git d'un repo local, au même chemin dans le worker que sur la machine. */
+export const localRepos = pgTable(
+  "local_repos",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    repoId: uuid("repo_id")
+      .notNull()
+      .unique()
+      .references(() => repos.id),
+    path: text("path").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("local_repos_org_path_idx").on(t.orgId, t.path)],
+);
+
+/** Issues et demandes de merge d'un repo local : une seule suite de numéros, comme sur GitHub. */
+export const localItems = pgTable(
+  "local_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: orgId(),
+    repoId: uuid("repo_id")
+      .notNull()
+      .references(() => repos.id),
+    number: integer("number").notNull(),
+    kind: text("kind", { enum: ["issue", "merge_request"] }).notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    state: text("state", { enum: ["open", "closed", "merged"] })
+      .notNull()
+      .default("open"),
+    head: text("head"),
+    base: text("base"),
+    draft: boolean("draft").notNull().default(false),
+    mergeSha: text("merge_sha"),
+    labels: jsonb("labels").notNull().default([]),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("local_items_repo_number_idx").on(t.repoId, t.number)],
+);
+
+/** Commentaires et reviews (review : `review` porte les commentaires en ligne). */
+export const localComments = pgTable(
+  "local_comments",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    orgId: orgId(),
+    repoId: uuid("repo_id")
+      .notNull()
+      .references(() => repos.id),
+    number: integer("number").notNull(),
+    kind: text("kind", { enum: ["comment", "review"] }).notNull(),
+    body: text("body").notNull(),
+    review: jsonb("review"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("local_comments_item_idx").on(t.repoId, t.number)],
+);
+
+export const localChecks = pgTable(
+  "local_checks",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    orgId: orgId(),
+    repoId: uuid("repo_id")
+      .notNull()
+      .references(() => repos.id),
+    sha: text("sha").notNull(),
+    name: text("name").notNull(),
+    status: text("status").notNull(),
+    conclusion: text("conclusion"),
+    title: text("title").notNull(),
+    summary: text("summary").notNull(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("local_checks_repo_sha_name_idx").on(t.repoId, t.sha, t.name)],
+);

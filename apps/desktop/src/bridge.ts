@@ -1,15 +1,18 @@
-import type { DesktopBridge } from "@jules/ui";
+import type { DesktopBridge, DesktopMode, LocalStatus } from "@jules/ui";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 
-// Pont entre l'interface et le shell Tauri (src-tauri). Le jeton de session vit dans le trousseau du
-// système ; l'adresse du serveur, qui n'est pas secrète, dans le stockage de la webview.
+// Pont entre l'interface et le shell Tauri (src-tauri). Le jeton de session, la clé maître et le secret
+// de connexion du mode local vivent dans le trousseau du système ; l'adresse du serveur et le mode,
+// qui ne sont pas secrets, dans le stockage de la webview.
 
 const SERVER_KEY = "jules.server";
+const MODE_KEY = "jules.mode";
 
 /** Mise à jour signée : le plugin vérifie la signature avec la clé publique embarquée, et refuse le reste. */
 async function installUpdate(): Promise<void> {
@@ -46,6 +49,30 @@ export async function tauriBridge(): Promise<DesktopBridge> {
     },
     setTrayCount: (count) => invoke("set_tray_count", { count }),
     openInEditor: (path) => invoke("open_in_editor", { path }),
+    local: {
+      // Une app du mode connecté (M9) qui connaît déjà son serveur reste en mode connecté.
+      savedMode: () =>
+        Promise.resolve(
+          (localStorage.getItem(MODE_KEY) as DesktopMode | null) ??
+            (localStorage.getItem(SERVER_KEY) ? "server" : null),
+        ),
+      saveMode: (mode) => {
+        if (mode) {
+          localStorage.setItem(MODE_KEY, mode);
+        } else {
+          localStorage.removeItem(MODE_KEY);
+        }
+        return Promise.resolve();
+      },
+      status: () => invoke<LocalStatus>("local_status"),
+      start: () => invoke<LocalStatus>("local_start"),
+      stop: () => invoke("local_stop"),
+      loginSecret: () => invoke<{ secret: string; login: string }>("local_login_secret"),
+      async pickFolder() {
+        const path = await open({ directory: true, multiple: false });
+        return typeof path === "string" ? invoke<string>("local_container_path", { path }) : null;
+      },
+    },
     onNavigate(handler) {
       const unlisten = listen<string>("navigate", (event) => {
         handler(event.payload);

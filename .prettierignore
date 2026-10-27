@@ -6,3 +6,4 @@ packages/db/migrations/meta/
 packages/ui/src/styles/tokens.css
 **/__screenshots__/
 apps/desktop/src-tauri/icons/
+**/target/

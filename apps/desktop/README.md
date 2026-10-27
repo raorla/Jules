@@ -1,13 +1,13 @@
 # Jules desktop
 
-L'app desktop de Jules (Tauri 2), en mode connecté : la même interface que le web (`packages/ui`), plus la connexion par le navigateur du système (OAuth avec PKCE, RFC 8252), le jeton rangé dans le trousseau, les notifications natives, la barre système et l'ouverture d'un dossier local dans l'éditeur. Voir [ARCHITECTURE.md §4.7](../../ARCHITECTURE.md#47-app-desktop-appsdesktop).
+L'app desktop de Jules (Tauri 2) : la même interface que le web (`packages/ui`), plus la connexion par le navigateur du système (OAuth avec PKCE, RFC 8252), le jeton rangé dans le trousseau, les notifications natives, la barre système et l'ouverture d'un dossier local dans l'éditeur. Au premier lancement, elle propose deux modes : **connecté** (un serveur Jules) ou **local** (la pile Jules sur cette machine, par Docker ou Podman, sur des dossiers git, sans GitHub ; voir [deploy/README.md §11](../../deploy/README.md#11-mode-local-app-desktop)). Voir [ARCHITECTURE.md §4.7](../../ARCHITECTURE.md#47-app-desktop-appsdesktop).
 
 | Dossier | Contenu |
 |---|---|
 | `src/` | entrée de l'interface et pont vers le shell (`bridge.ts`) |
-| `src-tauri/` | shell Tauri : trousseau, connexion, notifications, barre système, mises à jour |
-| `core/` | logique sans Tauri, testée partout : PKCE, retour de l'OAuth, compatibilité, signatures |
-| `e2e/` | l'interface desktop dans un navigateur, avec un pont simulé et la vraie api |
+| `src-tauri/` | shell Tauri : trousseau, connexion, notifications, barre système, mises à jour, commandes du mode local |
+| `core/` | logique sans Tauri, testée partout : PKCE, retour de l'OAuth, compatibilité, signatures ; et, pour le mode local, la détection du moteur et de l'isolation, la pile (`stack`, `local`) et la remise unique de la clé maître au worker (`handoff`) |
+| `e2e/` | l'interface desktop dans un navigateur, avec un pont simulé et la vraie api (en mode serveur, et en mode local avec de vrais dossiers git) |
 
 ## Développer
 
@@ -20,7 +20,7 @@ sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
 ```bash
 pnpm --filter @jules/desktop tauri dev           # l'app, branchée sur Vite
 cargo test --manifest-path apps/desktop/core/Cargo.toml
-pnpm --filter @jules/desktop e2e                 # connexion, version trop ancienne, notification
+pnpm --filter @jules/desktop e2e                 # connexion, version trop ancienne, notification, mode local
 ```
 
 ## Publier une version signée

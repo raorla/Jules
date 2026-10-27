@@ -391,6 +391,39 @@
     "update_text": "Cette app ({{version}}) est trop ancienne pour ce serveur, qui demande au moins la version {{minimum}}. Installe la mise à jour pour continuer.",
     "version": "Version",
     "retry": "Réessayer",
-    "approval_requested": "approbation demandée"
+    "approval_requested": "approbation demandée",
+    "mode_choice": "Où Jules doit-il travailler ?",
+    "mode_local": "Sur cette machine",
+    "mode_local_text": "Mode local : Jules tourne ici, sur tes dossiers git, sans GitHub.",
+    "mode_server": "Avec un serveur Jules",
+    "mode_server_text": "Mode connecté : l'app se connecte au serveur de ton équipe.",
+    "switch_mode": "Changer de mode",
+    "local_starting": "Démarrage de Jules sur cette machine…",
+    "engine_missing": "Ni Docker ni Podman n'est installé",
+    "engine_help": "Le mode local lance Jules dans des conteneurs. Installe l'un des deux, démarre-le, puis réessaie.",
+    "engine_docker": "macOS, Windows (avec WSL 2) et Linux",
+    "engine_podman": "alternative libre, sans service en arrière-plan"
+  },
+  "local": {
+    "mode_title": "Mode de l'app",
+    "isolation": {
+      "gvisor": "Isolation : gVisor",
+      "vm": "Isolation : VM",
+      "runc": "Isolation : conteneur seul"
+    },
+    "isolation_text": {
+      "gvisor": "Les agents tournent sous gVisor, comme sur un serveur Jules.",
+      "vm": "Les agents tournent dans la VM de Docker Desktop ou de Podman, sans gVisor. Pour un repo sensible, préfère un serveur Jules.",
+      "runc": "Les agents tournent dans un conteneur ordinaire, sans gVisor ni VM : isolation faible. Installe gVisor (runsc) ou utilise un serveur Jules."
+    },
+    "repos": "Dossiers de cette machine",
+    "no_repos": "Aucun dossier : ajoute un dossier git pour confier une tâche à Jules.",
+    "add_repo": "Ajouter un dossier",
+    "merge_request": "Demande de merge !{{number}}",
+    "merge": "Merger dans la branche de base",
+    "merging": "Merge en cours dans le dossier…",
+    "merged": "Mergée ({{sha}}) : la branche de base du dossier est à jour.",
+    "merge_refused": "Merge refusé",
+    "merge_role": "Le merge demande le rôle maintainer."
   }
 }

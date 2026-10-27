@@ -208,3 +208,14 @@ Génère une nouvelle clé sur la page de l'App, enregistre-la avec `secrets set
 ### Rotation du secret de webhook
 
 Génère un nouveau secret dans `secrets/github_webhook_secret`, recopie-le dans les réglages de l'App, puis `docker compose restart gateway`. Les livraisons refusées pendant le changement sont rattrapées par la réconciliation.
+
+## 11. Mode local (app desktop)
+
+En mode local, l'app desktop lance elle-même `deploy/local/compose.yaml` (embarqué dans l'app) : PostgreSQL, l'api et le worker, avec les images du serveur. Il n'y a ni GitHub App ni domaine ; rien n'est à configurer à la main. Ce qui suit sert au diagnostic.
+
+- **Moteur** : Docker (Docker Engine sous Linux, Docker Desktop sous macOS et Windows avec WSL 2) ou Podman. L'app lit `docker info`, puis `podman info`, et propose l'installation si aucun ne répond. Le pilote des sandboxes n'est vérifié qu'avec Docker : Podman est détecté, mais son réseau interne isolé reste à valider.
+- **Isolation** : gVisor si `runsc` figure parmi les runtimes de Docker (Linux), sinon la VM de Docker Desktop, sinon un conteneur ordinaire. L'app l'affiche en permanence. Pour un repo sensible, préfère un serveur Jules.
+- **Images** : tant qu'elles ne sont pas publiées, construis-les une fois depuis le repo : `docker compose -f deploy/local/compose.yaml --profile images build` (les variables requises peuvent rester vides pour un build).
+- **Secrets** : la clé maître et le secret de connexion de l'app sont tirés au premier lancement et rangés dans le trousseau du système (service `jules-desktop`, entrées `local:master-key` et `local:login-secret`). Aucun fichier ne les contient ; l'environnement des conteneurs non plus. La clé est remise au worker une fois par démarrage, sur `$XDG_RUNTIME_DIR/jules/handoff.sock` (Linux) ou une adresse de bouclage (Docker Desktop) : un worker arrêté est relancé par l'app, pas par Docker. La clé API du fournisseur s'enregistre dans **Réglages → Secrets**, chiffrée en base comme sur un serveur.
+- **Dossiers** : le dossier personnel est monté au même chemin dans le worker (`JULES_LOCAL_ROOT` pour en choisir un autre), avec les droits de la personne. Sous Windows, les chemins passent par `/run/desktop/mnt/host/<lecteur>`, la convention de Docker Desktop avec WSL 2.
+- **Arrêter, repartir de zéro** : `docker compose -p jules-local stop` garde les données ; `docker compose -p jules-local down -v` efface la base locale. Supprimer les entrées du trousseau rend illisibles les secrets chiffrés de cette base.

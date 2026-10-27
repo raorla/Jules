@@ -5,6 +5,7 @@ import fastifyStatic from "@fastify/static";
 import { sql, type Db } from "@jules/db";
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 import type pg from "pg";
+import { registerLocalRoutes, type LocalModeOptions } from "./local-routes.js";
 import { registerOAuth, type OAuthConfig } from "./oauth.js";
 import { registerPasskeys, type RelyingParty } from "./passkeys.js";
 import { registerDevopsRoutes } from "./devops-routes.js";
@@ -18,7 +19,10 @@ export type ApiOptions = {
   db: Db;
   pool: pg.Pool;
   publicUrl: string;
-  oauth: OAuthConfig;
+  /** Connexion GitHub ; absente en mode local. */
+  oauth?: OAuthConfig;
+  /** Mode local du desktop (M10) : connexion par secret, dossiers git, merge par le bouton. */
+  local?: LocalModeOptions;
   adminLogins: readonly string[];
   sessionTtlHours?: number;
   /** Origines supplémentaires de la webview desktop (tests de l'interface desktop dans un navigateur). */
@@ -86,17 +90,27 @@ export async function buildApi(options: ApiOptions): Promise<FastifyInstance> {
 
   app.get("/v1/health", async () => {
     await options.db.execute(sql`select 1`);
-    return { ok: true, api: "v1", desktop: { minVersion: "0.1.0" } };
+    return {
+      ok: true,
+      api: "v1",
+      mode: options.local ? "local" : "server",
+      desktop: { minVersion: "0.1.0" },
+    };
   });
 
-  registerOAuth(app, {
-    db: options.db,
-    oauth: options.oauth,
-    publicUrl: publicOrigin,
-    adminLogins: options.adminLogins,
-    ttlHours: options.sessionTtlHours ?? 12,
-    secureCookies: url.protocol === "https:",
-  });
+  if (options.oauth) {
+    registerOAuth(app, {
+      db: options.db,
+      oauth: options.oauth,
+      publicUrl: publicOrigin,
+      adminLogins: options.adminLogins,
+      ttlHours: options.sessionTtlHours ?? 12,
+      secureCookies: url.protocol === "https:",
+    });
+  }
+  if (options.local) {
+    registerLocalRoutes(app, { db: options.db, publicOrigin, local: options.local });
+  }
   registerPasskeys(app, { db: options.db, rp });
   registerRoutes(app, { db: options.db, publicOrigin, pool: options.pool });
   registerDevopsRoutes(app, { db: options.db, publicOrigin });

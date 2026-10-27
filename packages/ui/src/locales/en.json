@@ -391,6 +391,39 @@
     "update_text": "This app ({{version}}) is too old for this server, which requires at least version {{minimum}}. Install the update to continue.",
     "version": "Version",
     "retry": "Retry",
-    "approval_requested": "approval requested"
+    "approval_requested": "approval requested",
+    "mode_choice": "Where should Jules work?",
+    "mode_local": "On this machine",
+    "mode_local_text": "Local mode: Jules runs here, on your git folders, without GitHub.",
+    "mode_server": "With a Jules server",
+    "mode_server_text": "Connected mode: the app connects to your team's server.",
+    "switch_mode": "Switch mode",
+    "local_starting": "Starting Jules on this machine…",
+    "engine_missing": "Neither Docker nor Podman is installed",
+    "engine_help": "Local mode runs Jules in containers. Install one of them, start it, then retry.",
+    "engine_docker": "macOS, Windows (with WSL 2) and Linux",
+    "engine_podman": "free alternative, no background service"
+  },
+  "local": {
+    "mode_title": "App mode",
+    "isolation": {
+      "gvisor": "Isolation: gVisor",
+      "vm": "Isolation: VM",
+      "runc": "Isolation: container only"
+    },
+    "isolation_text": {
+      "gvisor": "Agents run under gVisor, as on a Jules server.",
+      "vm": "Agents run in the Docker Desktop or Podman VM, without gVisor. For a sensitive repo, prefer a Jules server.",
+      "runc": "Agents run in a plain container, without gVisor or a VM: weak isolation. Install gVisor (runsc) or use a Jules server."
+    },
+    "repos": "Folders on this machine",
+    "no_repos": "No folder yet: add a git folder to give Jules a task.",
+    "add_repo": "Add a folder",
+    "merge_request": "Merge request !{{number}}",
+    "merge": "Merge into the base branch",
+    "merging": "Merging in the folder…",
+    "merged": "Merged ({{sha}}): the folder's base branch is up to date.",
+    "merge_refused": "Merge refused",
+    "merge_role": "Merging requires the maintainer role."
   }
 }

@@ -139,13 +139,34 @@ export async function pushBranch(
   token?: string,
 ): Promise<void> {
   await git(
-    ["push", "--quiet", "--no-verify", remoteUrl, `refs/heads/${branch}:refs/heads/${branch}`],
+    [
+      "push",
+      "--quiet",
+      "--no-verify",
+      ...(isLocalRemote(remoteUrl) ? [`--receive-pack=${LOCAL_RECEIVE_PACK}`] : []),
+      remoteUrl,
+      `refs/heads/${branch}:refs/heads/${branch}`,
+    ],
     {
       cwd: pristineDir,
       ...(token ? { token } : {}),
     },
   );
 }
+
+/** Dossier de la machine (mode local), par opposition à une URL `https://` ou `ssh://`. */
+export function isLocalRemote(remoteUrl: string): boolean {
+  return !/^[a-z][\w+.-]*:\/\//i.test(remoteUrl) && !/^[\w.-]+@[\w.-]+:/.test(remoteUrl);
+}
+
+/**
+ * Pousser vers un dossier local lance `git receive-pack` dans ce dossier, avec sa propre config :
+ * les options `-c` du worker ne lui sont pas transmises. Sans cette commande, un hook `post-receive`
+ * versionné (un `core.hooksPath` absolu vers le dossier de travail), écrit par l'agent sur sa branche
+ * puis extrait par la personne, s'exécuterait dans le worker.
+ */
+const LOCAL_RECEIVE_PACK =
+  "git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c receive.autogc=false receive-pack";
 
 export async function removeDir(dir: string): Promise<void> {
   await rm(dir, { recursive: true, force: true });

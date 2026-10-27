@@ -45,18 +45,23 @@ export async function eventually<T>(
   }
 }
 
+type TaskOverrides = {
+  issueNumber?: number;
+  state?: "received" | "building";
+  autonomy?: "L0" | "L1" | "L2";
+  title?: string;
+  request?: string;
+  /** Mode local (M10) : la tâche porte sur ce dossier git, par la forge locale. */
+  localPath?: string;
+};
+
 /** Une tâche prête à exécuter, sur un repo et une installation de test. */
-export async function seedTask(
-  db: Db,
-  overrides: {
-    issueNumber?: number;
-    state?: "received" | "building";
-    autonomy?: "L0" | "L1" | "L2";
-    title?: string;
-    request?: string;
-  } = {},
-) {
-  const { installations, repos, tasks } = await import("@jules/db");
+export async function seedTask(db: Db, overrides: TaskOverrides = {}) {
+  const { installations, repos, registerLocalRepo } = await import("@jules/db");
+  if (overrides.localPath) {
+    const repo = await registerLocalRepo(db, { orgId: DEFAULT_ORG_ID, path: overrides.localPath });
+    return { repo, task: await insertTask(db, repo.id, overrides) };
+  }
   const [installation] = await db
     .insert(installations)
     .values({
@@ -86,11 +91,20 @@ export async function seedTask(
       set: { fullName: "acme/sandbox" },
     })
     .returning();
+  return {
+    installation: installation!,
+    repo: repo!,
+    task: await insertTask(db, repo!.id, overrides),
+  };
+}
+
+async function insertTask(db: Db, repoId: string, overrides: TaskOverrides) {
+  const { tasks } = await import("@jules/db");
   const [task] = await db
     .insert(tasks)
     .values({
       orgId: DEFAULT_ORG_ID,
-      repoId: repo!.id,
+      repoId,
       agent: "developer",
       issueNumber: overrides.issueNumber ?? Math.floor(Math.random() * 1e6),
       title: overrides.title ?? "Ajouter /healthz",
@@ -109,5 +123,5 @@ export async function seedTask(
       ...(overrides.autonomy ? { autonomy: overrides.autonomy } : {}),
     })
     .returning();
-  return { installation: installation!, repo: repo!, task: task! };
+  return task!;
 }

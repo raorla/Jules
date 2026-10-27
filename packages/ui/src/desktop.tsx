@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { LogIn, RefreshCw, Server as ServerIcon } from "lucide-react";
+import { ArrowLeftRight, HardDrive, LogIn, RefreshCw, Server as ServerIcon } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { api, configureApi, type Plan } from "./api.js";
@@ -10,6 +10,34 @@ import { api, configureApi, type Plan } from "./api.js";
 // desktop n'a aucun chemin de code propre pour les agents : il envoie les mêmes commandes.
 
 export type DesktopNotification = { title: string; body: string; route: string };
+
+export type DesktopMode = "server" | "local";
+
+/** Isolation des sandboxes en mode local (ARCHITECTURE.md §4.7) : du plus fort au plus faible. */
+export type LocalIsolation = "gvisor" | "vm" | "runc";
+
+export type LocalStatus = {
+  /** Moteur de conteneurs trouvé ; aucun : l'app aide à en installer un. */
+  engine: { kind: "docker" | "podman"; version: string } | null;
+  isolation: LocalIsolation | null;
+  running: boolean;
+  /** Adresse de l'api locale (bouclage) quand la pile tourne. */
+  url: string | null;
+};
+
+/** Mode local (M10) : la pile Jules sur la machine, pilotée par le shell. */
+export type LocalStack = {
+  savedMode(): Promise<DesktopMode | null>;
+  saveMode(mode: DesktopMode | null): Promise<void>;
+  status(): Promise<LocalStatus>;
+  /** Lance PostgreSQL, l'api et le worker, puis remet la clé maître du trousseau au worker. */
+  start(): Promise<LocalStatus>;
+  stop(): Promise<void>;
+  /** Secret de connexion à l'api locale, tiré au premier lancement et rangé dans le trousseau. */
+  loginSecret(): Promise<{ secret: string; login: string }>;
+  /** Sélecteur de dossier du système. */
+  pickFolder(): Promise<string | null>;
+};
 
 /** Ce que le shell Tauri fournit à l'interface (apps/desktop/src/bridge.ts). */
 export type DesktopBridge = {
@@ -26,10 +54,17 @@ export type DesktopBridge = {
   openInEditor(path: string): Promise<void>;
   /** Clic sur une notification ou sur la barre système : la route à afficher. */
   onNavigate(handler: (route: string) => void): () => void;
+  /** Absent : le shell ne sait pas lancer la pile locale, seul le mode connecté est proposé. */
+  local?: LocalStack;
 };
 
 const DesktopContext = createContext<DesktopBridge | undefined>(undefined);
 export const useDesktop = () => useContext(DesktopContext);
+
+export type DesktopSession = { mode: DesktopMode; local?: LocalStatus };
+const SessionContext = createContext<DesktopSession | undefined>(undefined);
+/** Mode du desktop et, en mode local, l'état de la pile ; `undefined` sur le web. */
+export const useDesktopSession = () => useContext(SessionContext);
 
 /** Comparaison semver simple (majeur.mineur.correctif) ; une pré-version est plus ancienne. */
 export function compareVersions(a: string, b: string): number {
@@ -58,11 +93,24 @@ export function approvalText(
   return `${env.charAt(0).toUpperCase()}${env.slice(1)} · ${server} : ${t("desktop.approval_requested")}`;
 }
 
-type Step = "server" | "checking" | "update" | "login" | "connecting";
+type Step =
+  | "mode"
+  | "server"
+  | "checking"
+  | "update"
+  | "login"
+  | "connecting"
+  | "local_starting"
+  | "local_install"
+  | "local_failed";
+
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * Connexion du desktop : adresse du serveur, compatibilité de version, puis OAuth avec PKCE. Un
- * desktop trop ancien demande une mise à jour au lieu de se connecter.
+ * Connexion du desktop. Premier lancement : le choix du mode, connecté (un serveur Jules) ou local
+ * (la pile sur cette machine). Puis la compatibilité de version, et la connexion : OAuth avec PKCE
+ * pour un serveur, secret du trousseau pour l'api locale. Un desktop trop ancien demande une mise à
+ * jour au lieu de se connecter. Changer de mode ne demande aucune réinstallation.
  */
 export function DesktopGate({ bridge, children }: { bridge: DesktopBridge; children: ReactNode }) {
   const { t } = useTranslation();
@@ -70,48 +118,129 @@ export function DesktopGate({ bridge, children }: { bridge: DesktopBridge; child
   const [step, setStep] = useState<Step>("checking");
   const [minimum, setMinimum] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
-  const [ready, setReady] = useState(false);
+  const [session, setSession] = useState<DesktopSession | undefined>();
+  const [local, setLocal] = useState<LocalStatus | undefined>();
+  const stack = bridge.local;
+
+  /** Version acceptée par ce serveur ; sinon, l'écran de mise à jour. */
+  const compatible = async () => {
+    const health = await api<{ desktop?: { minVersion?: string } }>("/v1/health");
+    const min = health.desktop?.minVersion ?? "0.0.0";
+    if (compareVersions(bridge.version, min) < 0) {
+      setMinimum(min);
+      setStep("update");
+      return false;
+    }
+    return true;
+  };
+
+  /** Session déjà rangée dans le trousseau et encore valide. */
+  const resume = async (url: string) => {
+    const token = await bridge.getToken(url);
+    if (!token) {
+      return false;
+    }
+    configureApi({ baseUrl: url, token });
+    try {
+      await api("/v1/me");
+      return true;
+    } catch {
+      await bridge.clearToken(url);
+      configureApi({ baseUrl: url });
+      return false;
+    }
+  };
 
   const check = async (url: string) => {
     setError(undefined);
     setStep("checking");
     try {
       configureApi({ baseUrl: url });
-      const health = await api<{ desktop?: { minVersion?: string } }>("/v1/health");
-      const min = health.desktop?.minVersion ?? "0.0.0";
-      if (compareVersions(bridge.version, min) < 0) {
-        setMinimum(min);
-        setStep("update");
+      if (!(await compatible())) {
         return;
       }
-      const token = await bridge.getToken(url);
-      if (token) {
-        configureApi({ baseUrl: url, token });
-        try {
-          await api("/v1/me");
-          setReady(true);
-          return;
-        } catch {
-          await bridge.clearToken(url);
-          configureApi({ baseUrl: url });
-        }
+      if (await resume(url)) {
+        setSession({ mode: "server" });
+        return;
       }
       setStep("login");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(message(e));
       setStep("server");
     }
   };
 
+  const connectLocal = async () => {
+    if (!stack) {
+      setStep("server");
+      return;
+    }
+    setError(undefined);
+    setStep("local_starting");
+    try {
+      let status = await stack.status();
+      setLocal(status);
+      if (!status.engine) {
+        setStep("local_install");
+        return;
+      }
+      if (!status.running || !status.url) {
+        status = await stack.start();
+        setLocal(status);
+      }
+      const url = status.url ?? "";
+      configureApi({ baseUrl: url });
+      if (!(await compatible())) {
+        return;
+      }
+      if (!(await resume(url))) {
+        const credentials = await stack.loginSecret();
+        const { token } = await api<{ token: string }>("/v1/auth/local", {
+          method: "POST",
+          body: credentials,
+          anonymous: true,
+        });
+        await bridge.setToken(url, token);
+        configureApi({ baseUrl: url, token });
+      }
+      setSession({ mode: "local", local: status });
+    } catch (e) {
+      setError(message(e));
+      setStep("local_failed");
+    }
+  };
+
+  const choose = async (mode: DesktopMode | null) => {
+    await stack?.saveMode(mode);
+    setError(undefined);
+    if (mode === "local") {
+      await connectLocal();
+    } else if (mode === "server") {
+      setStep("server");
+    } else {
+      setStep("mode");
+    }
+  };
+
   useEffect(() => {
-    void bridge.savedServer().then((saved) => {
+    void (async () => {
+      const mode = stack ? await stack.savedMode() : "server";
+      if (mode === "local") {
+        await connectLocal();
+        return;
+      }
+      if (mode === null) {
+        setStep("mode");
+        return;
+      }
+      const saved = await bridge.savedServer();
       if (saved) {
         setServer(saved);
-        void check(saved);
+        await check(saved);
       } else {
         setStep("server");
       }
-    });
+    })();
     // Une seule fois au lancement : la suite dépend des actions de la personne.
   }, []);
 
@@ -127,16 +256,21 @@ export function DesktopGate({ bridge, children }: { bridge: DesktopBridge; child
       });
       await bridge.setToken(server, token);
       configureApi({ baseUrl: server, token });
-      setReady(true);
+      setSession({ mode: "server" });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(message(e));
       setStep("login");
     }
   };
 
-  if (ready) {
-    return <DesktopContext.Provider value={bridge}>{children}</DesktopContext.Provider>;
+  if (session) {
+    return (
+      <DesktopContext.Provider value={bridge}>
+        <SessionContext.Provider value={session}>{children}</SessionContext.Provider>
+      </DesktopContext.Provider>
+    );
   }
+  const serverStep = ["server", "checking", "login", "connecting"].includes(step);
   return (
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 16 }}>
       <div className="card stack" style={{ padding: 32, maxWidth: 520, width: "100%" }}>
@@ -145,14 +279,66 @@ export function DesktopGate({ bridge, children }: { bridge: DesktopBridge; child
           <br />
           <span>{t("desktop.subtitle")}</span>
         </h1>
-        {step === "update" ? (
+        {step === "mode" && (
+          <div className="stack" role="group" aria-label={t("desktop.mode_choice")}>
+            <button className="choice" onClick={() => void choose("local")}>
+              <HardDrive aria-hidden="true" />
+              <span>
+                <strong>{t("desktop.mode_local")}</strong>
+                <span className="ink-2">{t("desktop.mode_local_text")}</span>
+              </span>
+            </button>
+            <button className="choice" onClick={() => void choose("server")}>
+              <ServerIcon aria-hidden="true" />
+              <span>
+                <strong>{t("desktop.mode_server")}</strong>
+                <span className="ink-2">{t("desktop.mode_server_text")}</span>
+              </span>
+            </button>
+          </div>
+        )}
+        {step === "local_starting" && (
+          <p className="ink-2" role="status">
+            {t("desktop.local_starting")}
+          </p>
+        )}
+        {step === "local_install" && (
+          <div className="stack" role="alert">
+            <p className="chip warn">{t("desktop.engine_missing")}</p>
+            <p className="ink-2">{t("desktop.engine_help")}</p>
+            <ul className="ink-2">
+              <li>
+                <a
+                  href="https://docs.docker.com/get-started/get-docker/"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  Docker Desktop
+                </a>{" "}
+                · {t("desktop.engine_docker")}
+              </li>
+              <li>
+                <a
+                  href="https://podman.io/docs/installation"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  Podman
+                </a>{" "}
+                · {t("desktop.engine_podman")}
+              </li>
+            </ul>
+          </div>
+        )}
+        {step === "update" && (
           <div className="stack" role="alert">
             <p className="chip warn">{t("desktop.update_required")}</p>
             <p className="ink-2">
               {t("desktop.update_text", { version: bridge.version, minimum: minimum ?? "?" })}
             </p>
           </div>
-        ) : (
+        )}
+        {serverStep && (
           <form
             className="stack"
             onSubmit={(e) => {
@@ -196,16 +382,26 @@ export function DesktopGate({ bridge, children }: { bridge: DesktopBridge; child
             {error}
           </p>
         )}
-        <p className="muted">
-          {t("desktop.version")} {bridge.version}
-          {step === "update" && (
+        <p
+          className="muted"
+          style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
+        >
+          <span>
+            {t("desktop.version")} {bridge.version}
+          </span>
+          {(step === "update" || step === "local_install" || step === "local_failed") && (
             <button
               className="pill sm"
-              style={{ marginLeft: 8 }}
-              onClick={() => void check(server)}
+              onClick={() => void (local ? connectLocal() : check(server))}
             >
               <RefreshCw aria-hidden="true" />
               {t("desktop.retry")}
+            </button>
+          )}
+          {stack && step !== "mode" && step !== "local_starting" && (
+            <button className="pill sm" onClick={() => void choose(null)}>
+              <ArrowLeftRight aria-hidden="true" />
+              {t("desktop.switch_mode")}
             </button>
           )}
         </p>

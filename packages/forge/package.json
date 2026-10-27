@@ -18,6 +18,11 @@
       "@jules/source": "./src/testing.ts",
       "types": "./dist/testing.d.ts",
       "default": "./dist/testing.js"
+    },
+    "./local": {
+      "@jules/source": "./src/local.ts",
+      "types": "./dist/local.d.ts",
+      "default": "./dist/local.js"
     }
   },
   "files": [
@@ -29,6 +34,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@jules/db": "workspace:*",
     "octokit": "5.0.5"
   },
   "devDependencies": {

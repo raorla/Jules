@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Db } from "@jules/db";
+import type { GitHubApp } from "@jules/forge";
+import { LocalForge } from "@jules/forge/local";
 import { FakeGitHub } from "@jules/forge/testing";
 import { SandboxDriver, type RunOutcome, type RunSpec } from "@jules/sandbox";
 import pino from "pino";
@@ -53,16 +55,39 @@ export function bareRemote(): string {
   return remote;
 }
 
-export function sandboxSetup(
+/** Dossier de travail d'une personne (mode local) : un vrai repo, main extraite, mêmes fichiers. */
+export function workingRepo(): string {
+  const root = mkdtempSync(join(tmpdir(), "jules-local-"));
+  const dir = join(root, "sandbox");
+  execFileSync("git", ["init", "--quiet", "-b", "main", dir]);
+  writeFileSync(join(dir, "README.md"), "# sandbox\n");
+  writeFileSync(
+    join(dir, "package.json"),
+    '{ "name": "sandbox", "version": "1.0.0", "private": true }\n',
+  );
+  execFileSync("git", ["-C", dir, "add", "."]);
+  execFileSync("git", [
+    "-C",
+    dir,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "commit",
+    "--quiet",
+    "-m",
+    "init",
+  ]);
+  return dir;
+}
+
+function orchestratorFor(
   db: Db,
+  github: GitHubApp,
   model: FakeModel,
-  overrides: Partial<OrchestratorDeps["config"]> = {},
-  extra: Pick<OrchestratorDeps, "devops"> = {},
+  overrides: Partial<OrchestratorDeps["config"]>,
+  extra: Pick<OrchestratorDeps, "devops">,
 ) {
-  const github = new FakeGitHub({ url: "http://127.0.0.1:9", secret: "x" });
-  github.setRole("alice", "write");
-  const remote = bareRemote();
-  github.remotes.set("acme/sandbox", remote);
   const instance = `test-${crypto.randomUUID().slice(0, 8)}`;
   const driver = new RecordingDriver({
     instance,
@@ -98,5 +123,29 @@ export function sandboxSetup(
       ...overrides,
     },
   });
-  return { github, remote, driver, runsDir, orchestrator, log, instance };
+  return { driver, runsDir, orchestrator, log, instance };
+}
+
+export function sandboxSetup(
+  db: Db,
+  model: FakeModel,
+  overrides: Partial<OrchestratorDeps["config"]> = {},
+  extra: Pick<OrchestratorDeps, "devops"> = {},
+) {
+  const github = new FakeGitHub({ url: "http://127.0.0.1:9", secret: "x" });
+  github.setRole("alice", "write");
+  const remote = bareRemote();
+  github.remotes.set("acme/sandbox", remote);
+  return { github, remote, ...orchestratorFor(db, github, model, overrides, extra) };
+}
+
+/** Mode local (M10) : même orchestrateur, forge locale sur un dossier de travail. */
+export function localSandboxSetup(
+  db: Db,
+  model: FakeModel,
+  overrides: Partial<OrchestratorDeps["config"]> = {},
+) {
+  const forge = new LocalForge(db);
+  const path = workingRepo();
+  return { forge, path, ...orchestratorFor(db, forge, model, overrides, {}) };
 }

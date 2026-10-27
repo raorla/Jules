@@ -28,6 +28,7 @@ import {
 } from "./api.js";
 import { ArtifactCards } from "./artifacts.js";
 import { PendingPlans } from "./devops.js";
+import { DesktopModeCard, LocalMergeCard, LocalReposCard } from "./local.js";
 import { OrgSettingsCard } from "./security.js";
 import {
   Card,
@@ -395,6 +396,7 @@ export function TaskPage() {
     queryKey: ["task", id],
     queryFn: () => api<TaskDetail>(`/v1/tasks/${id}`),
   });
+  const me = useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/v1/me") });
   if (!detail.data) return <p className="muted">{t("common.loading")}</p>;
   const { task, artifacts, runs } = detail.data;
   // Une tâche qui attend ton accord montre la décision en premier, avant les artefacts (aussi sur mobile).
@@ -446,12 +448,14 @@ export function TaskPage() {
         <div className="stack">
           {!deciding && <TaskActions detail={detail.data} />}
           <CostMeter cost={task.costUsd} budget={task.budgetUsd} />
-          {task.prUrl && (
-            <a className="pill" href={task.prUrl} target="_blank" rel="noreferrer noopener">
-              <GitPullRequest aria-hidden="true" />
-              {t("task.pr")}
-            </a>
-          )}
+          {task.prUrl?.startsWith("local:")
+            ? me.data && <LocalMergeCard detail={detail.data} me={me.data} />
+            : task.prUrl && (
+                <a className="pill" href={task.prUrl} target="_blank" rel="noreferrer noopener">
+                  <GitPullRequest aria-hidden="true" />
+                  {t("task.pr")}
+                </a>
+              )}
           <Card title={t("task.runs")} icon={<ClipboardList aria-hidden="true" />}>
             <div className="card-body rows">
               {runs.map((r) => (
@@ -561,6 +565,8 @@ export function SettingsPage({ me }: { me: Me }) {
   return (
     <div className="grid-2">
       <div className="stack">
+        <DesktopModeCard />
+        <LocalReposCard me={me} />
         <Card title={t("settings.repos")}>
           <div className="card-body rows">
             {(repos.data ?? []).map((repo) => (

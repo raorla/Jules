@@ -1,14 +1,18 @@
-//! Shell Tauri de Jules (ARCHITECTURE.md §4.7, mode connecté) : trousseau, connexion OAuth avec PKCE
-//! sur une adresse de bouclage, notifications natives, barre système, ouverture dans l'éditeur.
-//! L'app n'a aucun chemin de code propre pour les agents : elle parle à l'api comme le web.
+//! Shell Tauri de Jules (ARCHITECTURE.md §4.7) : trousseau, connexion OAuth avec PKCE sur une adresse
+//! de bouclage, notifications natives, barre système, ouverture dans l'éditeur ; et, en mode local
+//! (M10), la pile Jules sur la machine, lancée par Docker ou Podman, avec la clé maître remise au
+//! worker depuis le trousseau. L'app n'a aucun chemin de code propre pour les agents : elle parle à
+//! l'api comme le web.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use jules_desktop_core::callback::parse_callback;
+use jules_desktop_core::engine::EngineKind;
+use jules_desktop_core::local::{self, Vault};
 use jules_desktop_core::pkce::{login_url, random_token, Pkce};
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -137,6 +141,109 @@ fn open_in_editor(path: String) -> Result<(), String> {
     std::process::Command::new(editor).arg(target).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+// Mode local (M10) : la logique est dans jules_desktop_core::local ; le shell fournit ses dossiers
+// et le trousseau du système.
+
+struct Keychain;
+
+impl Vault for Keychain {
+    fn get(&self, name: &str) -> Result<Option<String>, String> {
+        match entry(name)?.get_password() {
+            Ok(value) => Ok(Some(value)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+    fn set(&self, name: &str, value: &str) -> Result<(), String> {
+        entry(name)?.set_password(value).map_err(|e| e.to_string())
+    }
+}
+
+#[derive(Serialize)]
+struct EngineInfo {
+    kind: &'static str,
+    version: String,
+}
+
+#[derive(Serialize)]
+struct LocalStatus {
+    engine: Option<EngineInfo>,
+    isolation: Option<&'static str>,
+    running: bool,
+    url: Option<String>,
+}
+
+impl From<local::Status> for LocalStatus {
+    fn from(status: local::Status) -> Self {
+        Self {
+            url: status.url(),
+            isolation: status.engine.as_ref().map(|e| e.isolation.as_str()),
+            engine: status.engine.map(|e| EngineInfo {
+                kind: match e.kind {
+                    EngineKind::Docker => "docker",
+                    EngineKind::Podman => "podman",
+                },
+                version: e.version,
+            }),
+            running: status.running,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct LocalLogin {
+    secret: String,
+    login: String,
+}
+
+fn local_paths(app: &AppHandle) -> Result<local::LocalPaths, String> {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(PathBuf::from)
+        .ok_or("dossier personnel introuvable")?;
+    Ok(local::LocalPaths {
+        compose: app.path().resource_dir().map_err(|e| e.to_string())?.join("local").join("compose.yaml"),
+        data: app.path().app_data_dir().map_err(|e| e.to_string())?,
+        runtime: std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
+        root: std::env::var_os("JULES_LOCAL_ROOT").map(PathBuf::from).unwrap_or(home),
+    })
+}
+
+#[tauri::command]
+async fn local_status() -> Result<LocalStatus, String> {
+    tauri::async_runtime::spawn_blocking(|| local::status().into()).await.map_err(|e| e.to_string())
+}
+
+/// Lance la pile et remet la clé maître du trousseau au worker, une seule fois.
+#[tauri::command]
+async fn local_start(app: AppHandle) -> Result<LocalStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        local::start(&local_paths(&app)?, &Keychain, env!("CARGO_PKG_VERSION")).map(Into::into)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn local_stop(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || local::stop(&local_paths(&app)?))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Secret de connexion à l'api locale, et le nom de la session du système comme login.
+#[tauri::command]
+fn local_login_secret() -> Result<LocalLogin, String> {
+    let secret = Keychain.get_or_create(local::LOGIN_ENTRY, || random_token(32))?;
+    let login = local::login_name(&std::env::var(if cfg!(windows) { "USERNAME" } else { "USER" }).unwrap_or_default());
+    Ok(LocalLogin { secret, login })
+}
+
+/// Chemin d'un dossier choisi, tel que le worker le voit (même chemin, sauf sous Windows).
+#[tauri::command]
+fn local_container_path(path: String) -> Result<String, String> {
+    local::container_path(&path)
+}
+
 fn show(app: &AppHandle, route: &str) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -148,6 +255,7 @@ fn show(app: &AppHandle, route: &str) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show(app, "/")))
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
@@ -160,7 +268,12 @@ pub fn run() {
             login,
             notify,
             set_tray_count,
-            open_in_editor
+            open_in_editor,
+            local_status,
+            local_start,
+            local_stop,
+            local_login_secret,
+            local_container_path
         ])
         .setup(|app| {
             // Barre système (DESIGN.md §11) : approbations en attente, arrêt d'urgence, quitter.

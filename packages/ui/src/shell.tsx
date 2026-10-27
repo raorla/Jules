@@ -21,6 +21,7 @@ import { useTranslation } from "react-i18next";
 import { api, type Me } from "./api.js";
 import { Chip, Dialog, useSensitiveAction } from "./components.js";
 import { useDesktopNotifications } from "./desktop.js";
+import { IsolationBadge } from "./local.js";
 
 // App shell du skill (components.md §4) : barre latérale flottante, colonne de cartes à 8 px.
 // L'arrêt d'urgence reste visible pour les admins, sur chaque écran (DESIGN.md §5).
@@ -214,6 +215,7 @@ export function Shell({ me, children }: { me: Me; children: ReactNode }) {
             label={t("nav.settings")}
           />
         </nav>
+        <IsolationBadge />
       </aside>
       <main className="main">
         <header className="topbar">

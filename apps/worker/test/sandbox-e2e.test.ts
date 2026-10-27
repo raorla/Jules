@@ -9,7 +9,7 @@ import { drainOutbox } from "../src/outbox.js";
 import { startFakeModel, type FakeModel, type Step } from "./fake-model.js";
 import { seedTask, testDeps } from "./harness.js";
 import { ensureTestImages } from "./images.js";
-import { API_KEY, sandboxSetup } from "./sandbox-harness.js";
+import { API_KEY, localSandboxSetup, sandboxSetup } from "./sandbox-harness.js";
 import { liftStop, stopAll } from "../src/emergency.js";
 
 let t: TestDatabase;
@@ -115,11 +115,26 @@ const ref = { installationId: 4242, owner: "acme", repo: "sandbox" };
 const taskState = async (id: string) =>
   (await t.db.select().from(tasks).where(eq(tasks.id, id)))[0];
 
-describe("M1 : sécurité du sandbox", () => {
+// DoD M10 : les mêmes tests passent en mode local, avec la forge locale sur un dossier de travail.
+describe.each(["github", "local"] as const)("M1 : sécurité du sandbox (forge %s)", (forge) => {
+  const setup = (fake: FakeModel) =>
+    forge === "local" ? localSandboxSetup(t.db, fake) : sandboxSetup(t.db, fake);
+  const seed = (s: ReturnType<typeof setup>) =>
+    seedTask(t.db, "path" in s ? { localPath: s.path } : {});
+  afterAll(async () => {
+    // Les tâches laissées par la variante locale ne doivent pas occuper l'orchestrateur des tests
+    // suivants, qui n'a que la forge GitHub.
+    if (forge === "local") {
+      await t.db.execute(
+        sql`update tasks set state = 'cancelled' where repo_id in (select id from repos where forge = 'local')`,
+      );
+    }
+  });
+
   it("aucune variable ni aucun fichier du sandbox ne contient le jeton GitHub ou la clé API", async () => {
     model = await startFakeModel(HAPPY);
-    const s = sandboxSetup(t.db, model);
-    await seedTask(t.db);
+    const s = setup(model);
+    await seed(s);
     await s.orchestrator.drainTasks();
     await s.orchestrator.idle();
 
@@ -149,7 +164,7 @@ describe("M1 : sécurité du sandbox", () => {
   });
 
   it("curl https://example.com échoue alors que npm install réussit", async () => {
-    const s = sandboxSetup(t.db, (model = await startFakeModel([])));
+    const s = setup((model = await startFakeModel([])));
     const outcome = await s.driver.run({
       runId: crypto.randomUUID(),
       image: "jules-sandbox-node:test",
@@ -174,7 +189,7 @@ describe("M1 : sécurité du sandbox", () => {
   }, 180_000);
 
   it("le sandbox ne joint ni Postgres, ni le gateway, ni l'hôte", async () => {
-    const s = sandboxSetup(t.db, (model = await startFakeModel([])));
+    const s = setup((model = await startFakeModel([])));
     const docker = new Docker();
     const info = await docker.getContainer(t.container.getId()).inspect();
     const pgIp = info.NetworkSettings.Networks.bridge?.IPAddress ?? "172.17.0.2";
@@ -214,8 +229,8 @@ describe("M1 : sécurité du sandbox", () => {
       },
       { text: "Terminé." },
     ]);
-    const s = sandboxSetup(t.db, model);
-    const { task } = await seedTask(t.db);
+    const s = setup(model);
+    const { task } = await seed(s);
     await s.orchestrator.drainTasks();
     await s.orchestrator.idle();
 
@@ -238,8 +253,8 @@ describe("M1 : sécurité du sandbox", () => {
       { tool: "mcp__jules__submit_build", input: { summary: "x", commitMessage: "feat: a" } },
       { text: "Terminé." },
     ]);
-    const s = sandboxSetup(t.db, model);
-    const { task } = await seedTask(t.db);
+    const s = setup(model);
+    const { task } = await seed(s);
     await s.orchestrator.drainTasks();
     await s.orchestrator.idle();
 
@@ -258,8 +273,8 @@ describe("M1 : sécurité du sandbox", () => {
       { tool: "mcp__jules__merge_pull_request", input: { number: 1 } },
       { text: "Je ne peux pas." },
     ]);
-    const s = sandboxSetup(t.db, model);
-    const { task } = await seedTask(t.db);
+    const s = setup(model);
+    const { task } = await seed(s);
     await s.orchestrator.drainTasks();
     await s.orchestrator.idle();
 
@@ -277,8 +292,8 @@ describe("M1 : sécurité du sandbox", () => {
   it("coupe l'exécution quand le budget est atteint", async () => {
     model = await startFakeModel(HAPPY);
     model.setUsage({ input_tokens: 2_000_000, output_tokens: 10 });
-    const s = sandboxSetup(t.db, model);
-    const { task } = await seedTask(t.db);
+    const s = setup(model);
+    const { task } = await seed(s);
     await s.orchestrator.drainTasks();
     await s.orchestrator.idle();
 

@@ -1,0 +1,131 @@
+# Pile du mode local du desktop (M10, ARCHITECTURE.md §4.7) : PostgreSQL, api et worker sur la machine
+# de la personne, les mêmes images que sur un serveur. L'app la lance elle-même (apps/desktop) : son
+# environnement vient du shell (apps/desktop/core/src/stack.rs) et ne contient aucune valeur secrète,
+# car Docker garde la config des conteneurs sur le disque. La clé maître est remise au worker au
+# démarrage par le trousseau du système (JULES_SECRETS_HANDOFF_*, un seul usage). Voir deploy/README.md §11.
+name: jules-local
+
+x-hardening: &hardening
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  restart: unless-stopped
+
+x-database:
+  &database # Réseau interne, aucun port publié : pas de mot de passe à ranger sur le disque.
+  DATABASE_URL: postgres://jules@postgres:5432/jules
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: jules
+      POSTGRES_USER: jules
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes: [pgdata:/var/lib/postgresql]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jules -d jules"]
+      interval: 2s
+      retries: 30
+    networks: [db]
+    restart: unless-stopped
+
+  migrate:
+    image: jules-worker:${JULES_VERSION:-local}
+    command: ["node", "dist/cli.js", "migrate"]
+    environment:
+      <<: *database
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [db]
+    <<: *hardening
+    restart: "no"
+
+  # Liée à l'adresse de bouclage seulement : ni le réseau local ni Internet ne la joignent.
+  api:
+    image: jules-api:${JULES_VERSION:-local}
+    environment:
+      <<: *database
+      JULES_MODE: local
+      JULES_PUBLIC_URL: http://127.0.0.1:${JULES_LOCAL_API_PORT:-43117}
+      JULES_LOCAL_LOGIN_HASH: ${JULES_LOCAL_LOGIN_HASH:?lancée par l'app desktop seulement}
+      JULES_LOCAL_ROOTS: ${JULES_LOCAL_ROOT:?lancée par l'app desktop seulement}
+      HOST: 0.0.0.0
+      PORT: "3001"
+    ports: ["127.0.0.1:${JULES_LOCAL_API_PORT:-43117}:3001"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/v1/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 2s
+      retries: 30
+    networks: [db, edge]
+    <<: *hardening
+
+  worker:
+    image: jules-worker:${JULES_VERSION:-local}
+    environment:
+      <<: *database
+      JULES_FORGE: local
+      JULES_SECRETS_HANDOFF_URL: ${JULES_SECRETS_HANDOFF_URL:?lancée par l'app desktop seulement}
+      JULES_SECRETS_HANDOFF_TOKEN: ${JULES_SECRETS_HANDOFF_TOKEN:?lancée par l'app desktop seulement}
+      JULES_LANGUAGE: ${JULES_LANGUAGE:-fr}
+      JULES_RUNS_DIR: ${JULES_LOCAL_RUNS_DIR:?lancée par l'app desktop seulement}
+      JULES_INSTANCE: local
+      JULES_SANDBOX_RUNTIME: ${JULES_SANDBOX_RUNTIME:-runc}
+      JULES_SANDBOX_IMAGE: jules-sandbox-node:${JULES_VERSION:-local}
+      JULES_EGRESS_IMAGE: jules-egress:${JULES_VERSION:-local}
+      JULES_EGRESS_ALLOW: ${JULES_EGRESS_ALLOW:-registry.npmjs.org}
+    # Sous Linux, les droits de la personne : le worker pousse les branches et merge dans ses dossiers.
+    user: ${JULES_LOCAL_USER:-1000:1000}
+    group_add: ["${DOCKER_GID:-0}"]
+    # Les dossiers sont montés au même chemin que sur la machine : le démon résout les montages des
+    # sandboxes de son côté. Le socket de remise des secrets n'existe que le temps du démarrage.
+    volumes:
+      - ${JULES_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - ${JULES_LOCAL_RUNS_DIR}:${JULES_LOCAL_RUNS_DIR}
+      - ${JULES_LOCAL_ROOT}:${JULES_LOCAL_ROOT}
+      - ${JULES_HANDOFF_DIR:?lancée par l'app desktop seulement}:/run/jules/handoff
+    # Docker Desktop : l'adresse de bouclage de la machine, pour la remise des secrets par TCP.
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    # `egress` : le fournisseur de modèle. Aucun service de la pile ne joint le worker.
+    networks: [db, egress]
+    <<: *hardening
+    # La clé maître n'est remise qu'une fois : un worker arrêté est relancé par l'app, avec une
+    # nouvelle remise, jamais par Docker.
+    restart: "no"
+
+  # Images lancées par le worker, une par exécution : construites avec `--profile images build`.
+  sandbox-image:
+    image: jules-sandbox-node:${JULES_VERSION:-local}
+    build: { context: ../.., dockerfile: deploy/Dockerfile, target: sandbox-node }
+    profiles: [images]
+  egress-image:
+    image: jules-egress:${JULES_VERSION:-local}
+    build: { context: ../.., dockerfile: deploy/Dockerfile, target: egress }
+    profiles: [images]
+  worker-image:
+    image: jules-worker:${JULES_VERSION:-local}
+    build: { context: ../.., dockerfile: deploy/Dockerfile, target: worker }
+    profiles: [images]
+  api-image:
+    image: jules-api:${JULES_VERSION:-local}
+    build: { context: ../.., dockerfile: deploy/Dockerfile, target: api }
+    profiles: [images]
+
+networks:
+  db: { internal: true }
+  edge: {}
+  egress: {}
+
+volumes:
+  pgdata: {}

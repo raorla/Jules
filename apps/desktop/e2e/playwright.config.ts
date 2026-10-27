@@ -24,6 +24,14 @@ export default defineConfig({
       reuseExistingServer: false,
     },
     {
+      // Mode local (M10) : l'api du desktop sur la machine, sans GitHub.
+      command: "pnpm exec tsx --conditions=@jules/source e2e/local-server.ts",
+      cwd: "..",
+      url: "http://localhost:4330/v1/health",
+      timeout: 180_000,
+      reuseExistingServer: false,
+    },
+    {
       command: "pnpm exec vite preview --port 4320 --strictPort",
       cwd: "..",
       url: "http://localhost:4320",

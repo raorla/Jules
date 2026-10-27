@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https://avatars.githubusercontent.com; connect-src 'self' ipc: http://ipc.localhost https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https://avatars.githubusercontent.com; connect-src 'self' ipc: http://ipc.localhost https: http://127.0.0.1:43117; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
     }
   },
   "bundle": {
@@ -37,14 +37,25 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "Jules sur ton bureau",
-    "macOS": { "minimumSystemVersion": "11.0" },
-    "linux": { "deb": { "depends": ["libwebkit2gtk-4.1-0", "libayatana-appindicator3-1"] } }
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libayatana-appindicator3-1"]
+      }
+    },
+    "resources": {
+      "../../../deploy/local/compose.yaml": "local/compose.yaml"
+    }
   },
   "plugins": {
     "updater": {
       "pubkey": "REMPLACER_PAR_LA_CLE_PUBLIQUE_DE_MISE_A_JOUR",
       "endpoints": ["https://github.com/OWNER/jules/releases/latest/download/latest.json"],
-      "windows": { "installMode": "passive" }
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

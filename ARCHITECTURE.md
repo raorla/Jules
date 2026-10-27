@@ -201,8 +201,11 @@ Elle fonctionne selon deux modes :
 - l'ouverture d'un diff ou d'un repo local dans l'éditeur.
 
 **Mode local.** L'app lance la pile Jules sur la machine (worker, PostgreSQL, egress proxy) avec Docker ou Podman, et travaille sur des dossiers locaux (forge locale, §11).
-- Les secrets sont rangés dans le trousseau du système (Keychain sur macOS, Gestionnaire d'identifiants sur Windows, Secret Service sur Linux) et transmis au worker au démarrage.
-- L'isolation dépend du système. Sous Linux, gVisor est disponible. Sous macOS et Windows, les conteneurs tournent dans la VM de Docker Desktop, sans gVisor. L'app affiche le niveau d'isolation en vigueur.
+- La pile est `deploy/local/compose.yaml`, avec les images du serveur. L'api n'écoute que sur l'adresse de bouclage (`127.0.0.1:43117`) et n'a aucun identifiant GitHub ; PostgreSQL n'a ni port publié ni mot de passe (réseau interne).
+- Les secrets sont rangés dans le trousseau du système (Keychain sur macOS, Gestionnaire d'identifiants sur Windows, Secret Service sur Linux). L'environnement des conteneurs n'en contient aucun, car Docker le garde sur le disque. Au démarrage, l'app remet la clé maître au worker une seule fois, par un point d'accès éphémère : un socket Unix dans un dossier privé, monté dans le seul conteneur du worker (Linux), ou une adresse de bouclage jointe par `host.docker.internal` (Docker Desktop). Le jeton de cette remise ne sert qu'une fois ; un worker arrêté est relancé par l'app, avec une nouvelle remise.
+- L'app se connecte à l'api locale avec un secret tiré au premier lancement et rangé dans le trousseau ; l'api n'en connaît que le hash. La personne est admin de son instance locale.
+- L'isolation dépend du système. Sous Linux, gVisor est utilisé s'il est installé (`runsc` parmi les runtimes de Docker). Sous macOS et Windows, les conteneurs tournent dans la VM de Docker Desktop, sans gVisor. Sans l'un ni l'autre, c'est un conteneur ordinaire. L'app affiche le niveau d'isolation en vigueur en permanence.
+- Changer de mode ne demande pas de réinstaller : le mode est un réglage de l'app, et les deux connexions restent dans le trousseau.
 
 Dans les deux modes, c'est le même moteur avec les mêmes règles. Le desktop n'a pas de chemin de code propre pour les agents.
 
@@ -463,6 +466,12 @@ Une forge est l'endroit où vivent le code et les demandes de merge. L'interface
 | Locale | desktop en mode local | écran de review dans l'app (diff, artefacts, gates) | par un humain, avec le bouton de l'app |
 | GitLab | plus tard | MR et pipelines | par un humain |
 
+**Forge locale** (`packages/forge/src/local.ts`, M10). Elle implémente le même port que GitHub, sur un dossier git de la machine et les tables `local_*` : le worker n'a aucun cas à part.
+- Un dossier enregistré devient un repo `local/<nom>`, sous une installation fictive (identifiant 0) et avec un identifiant de repo négatif, qui ne croise jamais un identifiant GitHub.
+- Issues et demandes de merge partagent une suite de numéros par repo ; commentaires, reviews et checks vivent en base. Le worker clone le dossier et y pousse les branches `jules/*`, jamais la branche de base.
+- Pousser vers un dossier lance `git receive-pack` avec la config de ce dossier, sans les options `-c` du worker : le push force donc un `receive-pack` sans hooks. Sans cela, un hook versionné par l'agent sur sa branche, puis extrait par la personne, s'exécuterait dans le worker.
+- Le merge est l'effet `local.merge`, demandé par le bouton de l'app (rôle maintainer, tâche en attente de review humaine) et exécuté par le worker. Base extraite et propre : `git merge --no-ff`, sans hooks ; dossier modifié : refus, la personne corrige puis reclique ; base non extraite : commit de merge construit à part et branche avancée par compare-and-swap. Le merge écrit ensuite un événement `pull_request` fermé et mergé, comme un webhook : retour d'expérience, audit et déploiement suivent sans cas à part.
+
 ## 12. Intégration GitHub
 
 ### Permissions de la GitHub App
@@ -585,6 +594,7 @@ Chaque table porte un `org_id`, même tant qu'il n'y a qu'une organisation. Acti
 | `audit_log` | journal append-only ; chaque ligne contient le hash de la précédente, ce qui rend toute altération détectable |
 | `lessons` | leçons par repo : texte, source, statut `proposed`, `approved`, `rejected` ou `retired` |
 | `secrets` | secrets chiffrés (chiffrement enveloppe), liés à leur référence |
+| `local_repos`, `local_items`, `local_comments`, `local_checks` | forge locale du mode local (§11) : chemin du dossier, issues et demandes de merge, commentaires et reviews, checks |
 
 ## 15. Mémoire et contexte
 
@@ -711,7 +721,8 @@ Il existe aussi par repo et par serveur. Seul un admin peut le lever, avec une p
 | Effet en double après un crash | Deux commentaires, deux PR ou deux notifications | `outbox` avec clé d'idempotence |
 | API compromise | Un attaquant prend le contrôle de l'api | aucun secret d'exécution dans l'api ; secrets en écriture seule ; le worker revérifie les droits de chaque commande |
 | Mise à jour du desktop piégée | Un binaire modifié est distribué | mises à jour signées ; binaires signés et notarisés |
-| Secrets du mode local | Lecture des secrets sur le disque de l'utilisateur | trousseau du système, jamais de secret en clair sur le disque |
+| Secrets du mode local | Lecture des secrets sur le disque de l'utilisateur | trousseau du système, jamais de secret en clair sur le disque ; clé maître remise une fois au worker, jamais dans l'environnement d'un conteneur |
+| Hook piégé en mode local | L'agent versionne un hook git que le push ou le merge exécuterait dans le worker | `receive-pack` et merge forcés sans hooks ni fsmonitor |
 | Commande usurpée | Un inconnu commente `/jules approve` | droits vérifiés à chaque commande ; commentaires édités et bots ignorés |
 | Webhook forgé ou rejoué | Requête envoyée directement au gateway | HMAC ; déduplication par `X-GitHub-Delivery` |
 | Coût qui s'emballe | Boucle infinie de corrections | budget appliqué par le proxy modèle ; itérations bornées |

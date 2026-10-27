@@ -16,6 +16,7 @@ import {
   sql,
   tasks,
   toolCalls,
+  users,
   type Db,
   type DbOrTx,
 } from "@jules/db";
@@ -24,6 +25,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { git, pushBranch, remoteBranchSha, type RepoRef } from "@jules/forge";
+import { LocalForge, LocalMergeError } from "@jules/forge/local";
 import {
   detectStack,
   missingRules,
@@ -89,6 +91,8 @@ const effectPayloads = {
   }),
   "github.sarif": z.object({ auditId: z.uuid() }),
   "github.security_issue": z.object({ findingId: z.uuid(), action: z.enum(["open", "close"]) }),
+  // Mode local (M10) : le merge demandé par le bouton de l'app, exécuté par le worker.
+  "local.merge": z.object({ taskId: z.uuid(), userId: z.uuid() }),
   "github.reply": z.object({
     installationId: z.number(),
     owner: z.string(),
@@ -455,6 +459,42 @@ const executors: Record<EffectKind, Executor> = {
       }));
     await db.update(findings).set({ githubIssueNumber: issue.number }).where(eq(findings.id, f.id));
     return { issueNumber: issue.number, operation: existing ? "found" : "created" };
+  },
+
+  "local.merge": async ({ db, github }, row) => {
+    const p = effectPayloads["local.merge"].parse(row.payload);
+    const { task, ref } = await loadTask(db, p.taskId);
+    if (!(github instanceof LocalForge) || task.prNumber === null) {
+      throw new Error(`tâche ${p.taskId} : pas de demande de merge locale`);
+    }
+    const [user] = await db
+      .select({ login: users.login })
+      .from(users)
+      .where(eq(users.id, p.userId));
+    try {
+      const { sha } = await github.merge(ref, task.prNumber, { login: user?.login ?? "jules" });
+      await appendAudit(db, {
+        orgId: task.orgId,
+        actor: { type: "user", id: p.userId },
+        action: "task.merged",
+        target: { type: "task", id: task.id },
+        data: { sha, prNumber: task.prNumber },
+      });
+      return { operation: "merged", sha };
+    } catch (error) {
+      if (!(error instanceof LocalMergeError)) {
+        throw error;
+      }
+      // Dossier modifié ou conflit : refus définitif, la personne corrige puis reclique.
+      await appendAudit(db, {
+        orgId: task.orgId,
+        actor: { type: "user", id: p.userId },
+        action: "task.merge_refused",
+        target: { type: "task", id: task.id },
+        data: { prNumber: task.prNumber },
+      });
+      return { operation: "refused", reason: error.message };
+    }
   },
 
   "github.reply": async ({ github }, row) => {

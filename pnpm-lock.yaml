@@ -117,6 +117,9 @@ importers:
       '@tauri-apps/api':
         specifier: 2.12.3
         version: 2.12.3
+      '@tauri-apps/plugin-dialog':
+        specifier: 2.8.2
+        version: 2.8.2
       '@tauri-apps/plugin-notification':
         specifier: 2.6.0
         version: 2.6.0
@@ -133,6 +136,15 @@ importers:
         specifier: 19.3.0
         version: 19.3.0(react@19.3.0)
     devDependencies:
+      '@jules/api':
+        specifier: workspace:*
+        version: link:../api
+      '@jules/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@jules/forge':
+        specifier: workspace:*
+        version: link:../../packages/forge
       '@playwright/test':
         specifier: 1.64.0
         version: 1.64.0
@@ -518,6 +530,9 @@ importers:
 
   packages/forge:
     dependencies:
+      '@jules/db':
+        specifier: workspace:*
+        version: link:../db
       octokit:
         specifier: 5.0.5
         version: 5.0.5
@@ -2291,6 +2306,9 @@ packages:
     resolution: {integrity: sha512-PMSppzAnlT+BvZtRKuidxjRSm2r5t8kDpJ/czmmQUa0AtDNTwrjLE8vApK3phCWGg7isfnYL46Dl1jB4ArI0hA==}
     engines: {node: '>= 10'}
     hasBin: true
+
+  '@tauri-apps/plugin-dialog@2.8.2':
+    resolution: {integrity: sha512-LFqp8OTx0bHOwhKRhMMDyRDlo/2IO5XxoOclpf8+yvjAfM2ytVdbB6tk63dBlicsR8pRw38maj/GxrU6cW8mXw==}
 
   '@tauri-apps/plugin-notification@2.6.0':
     resolution: {integrity: sha512-QvpsQ6L6uSGT/7AmIrEUrfOiqjP1S8HtBU1ieaX6bvOFXGjnoxbNMR9V+8PVhLqRdOntqevpUJ3c52S+1afsIw==}
@@ -5924,6 +5942,10 @@ snapshots:
       '@tauri-apps/cli-win32-arm64-msvc': 2.12.2
       '@tauri-apps/cli-win32-ia32-msvc': 2.12.2
       '@tauri-apps/cli-win32-x64-msvc': 2.12.2
+
+  '@tauri-apps/plugin-dialog@2.8.2':
+    dependencies:
+      '@tauri-apps/api': 2.12.3
 
   '@tauri-apps/plugin-notification@2.6.0':
     dependencies:

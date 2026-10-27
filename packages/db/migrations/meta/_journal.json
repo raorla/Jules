@@ -85,6 +85,13 @@
       "when": 1793107358773,
       "tag": "0011_m9_desktop",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793108823446,
+      "tag": "0012_m10_local_forge",
+      "breakpoints": true
     }
   ]
 }

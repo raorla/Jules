@@ -1,7 +1,8 @@
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_ORG_ID, createDatabase } from "@jules/db";
-import { OctokitGitHubApp } from "@jules/forge";
+import { OctokitGitHubApp, type GitHubApp } from "@jules/forge";
+import { LocalForge } from "@jules/forge/local";
 import { SandboxDriver, parseAllowlist } from "@jules/sandbox";
 import { SecretStore, keyringFromEnv } from "@jules/secrets";
 import { Masker } from "./broker/masking.js";
@@ -11,39 +12,71 @@ import { ServerService } from "./devops/servers.js";
 import { AuditService } from "./security/audits.js";
 import { stopAll } from "./emergency.js";
 import { ensureWorkerKey } from "./sealed-secrets.js";
-import { ANTHROPIC_KEY_SECRET, GITHUB_APP_KEY_SECRET, loadWorkerEnv } from "./config.js";
+import {
+  ANTHROPIC_KEY_SECRET,
+  GITHUB_APP_KEY_SECRET,
+  loadLocalWorkerEnv,
+  loadWorkerEnv,
+} from "./config.js";
+import { receiveHandoff } from "./local/handoff.js";
 import { createLogger } from "./logger.js";
 import { Orchestrator } from "./orchestrator.js";
 import { startTracing } from "./tracing.js";
 import { Worker } from "./worker.js";
 
-const env = loadWorkerEnv();
+// Mode local (M10) : même worker, forge locale, clé maître remise par le desktop.
+const local = process.env.JULES_FORGE === "local";
+const env = local ? loadLocalWorkerEnv() : loadWorkerEnv();
 const stopTracing = await startTracing(process.env);
 const log = createLogger(env.LOG_LEVEL);
 const database = createDatabase(env.DATABASE_URL);
 
 // Les seuls secrets d'exécution vivent ici, chiffrés en base et déchiffrés en mémoire (ARCHITECTURE.md §5).
-const store = new SecretStore(database.db, keyringFromEnv(env));
-const privateKey = await store.get(DEFAULT_ORG_ID, GITHUB_APP_KEY_SECRET);
-const apiKey = await store.get(DEFAULT_ORG_ID, ANTHROPIC_KEY_SECRET);
-if (!privateKey || !apiKey) {
-  const missing = !privateKey ? GITHUB_APP_KEY_SECRET : ANTHROPIC_KEY_SECRET;
-  log.fatal(`secret ${missing} absent : lancer \`jules secrets set ${missing} < fichier\``);
+const handoff =
+  "JULES_SECRETS_HANDOFF_URL" in env &&
+  env.JULES_SECRETS_HANDOFF_URL &&
+  env.JULES_SECRETS_HANDOFF_TOKEN
+    ? await receiveHandoff(env.JULES_SECRETS_HANDOFF_URL, env.JULES_SECRETS_HANDOFF_TOKEN)
+    : undefined;
+const store = new SecretStore(database.db, handoff?.keyring ?? keyringFromEnv(env));
+const apiKey = handoff?.anthropicApiKey
+  ? Buffer.from(handoff.anthropicApiKey)
+  : await store.get(DEFAULT_ORG_ID, ANTHROPIC_KEY_SECRET);
+if (!apiKey) {
+  log.fatal(
+    `secret ${ANTHROPIC_KEY_SECRET} absent : lancer \`jules secrets set ${ANTHROPIC_KEY_SECRET} < fichier\``,
+  );
   process.exit(1);
 }
 if (env.JULES_SANDBOX_RUNTIME !== "runsc") {
   log.warn(
     { runtime: env.JULES_SANDBOX_RUNTIME },
-    "sandbox sans gVisor : acceptable en développement seulement",
+    local
+      ? "sandbox sans gVisor : isolation par la VM de Docker Desktop ou runc seulement"
+      : "sandbox sans gVisor : acceptable en développement seulement",
   );
 }
 
-const github = new OctokitGitHubApp({
-  appId: env.GITHUB_APP_ID,
-  privateKey: privateKey.toString("utf8"),
-});
+let github: GitHubApp;
+if ("GITHUB_APP_ID" in env) {
+  const privateKey = await store.get(DEFAULT_ORG_ID, GITHUB_APP_KEY_SECRET);
+  if (!privateKey) {
+    log.fatal(
+      `secret ${GITHUB_APP_KEY_SECRET} absent : lancer \`jules secrets set ${GITHUB_APP_KEY_SECRET} < fichier\``,
+    );
+    process.exit(1);
+  }
+  github = new OctokitGitHubApp({
+    appId: env.GITHUB_APP_ID,
+    privateKey: privateKey.toString("utf8"),
+  });
+  privateKey.fill(0);
+} else {
+  const forge = new LocalForge(database.db);
+  log.info({ repos: await forge.load() }, "mode local : forge sur les dossiers de la machine");
+  github = forge;
+}
 const anthropicKey = apiKey.toString("utf8").trim();
-privateKey.fill(0);
 apiKey.fill(0);
 await mkdir(env.JULES_RUNS_DIR, { recursive: true, mode: 0o700 });
 // Clé publique des sealed boxes : l'api s'en sert pour les secrets saisis dans l'interface.

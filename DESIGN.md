@@ -1,7 +1,7 @@
 # Jules — Design de l'interface
 
 > Statut : brouillon v0.1 — 27/10/2026
-> Documents liés : [ARCHITECTURE.md](ARCHITECTURE.md) (§4.6 interface web, §4.7 app desktop), [ROADMAP.md](ROADMAP.md) (M6, M9)
+> Documents liés : [ARCHITECTURE.md](ARCHITECTURE.md) (§4.6 interface web, §4.7 app desktop), [ROADMAP.md](ROADMAP.md) (M6, M9, M10)
 
 L'interface web et l'app desktop partagent le même système : ton style « warm dark », celui de cache.mg, SnipAlert, DeltaLaunch et PixStock. La source de vérité est le skill `warm-dark-ui` (`~/.claude/skills/warm-dark-ui`). Ce document dit comment Jules l'applique ; il ne recopie pas le skill.
 
@@ -53,6 +53,7 @@ Badges qui restent toujours visibles :
 | Risque | `high` en `crit`, `medium` en `warn`, `low` en neutre |
 | Classe de commande | `dangerous` en `crit`, `change` en `warn`, `read` en neutre |
 | Autonomie | puce neutre : `L0` à `L2`, `D0` à `D3`, `S0` ou `S1` |
+| Isolation (desktop, mode local) | en bas de la barre latérale : gVisor en `ok`, VM de Docker Desktop en `warn`, conteneur seul en `crit` ; l'info-bulle dit ce que cela implique |
 
 Une couleur n'est jamais seule : chaque puce porte aussi un texte.
 
@@ -141,6 +142,8 @@ Ils sont construits sur les recettes du skill.
 - Barre de titre native sur les trois OS.
 - Menu de la barre système : approbations en attente, état des exécutions, accès à l'arrêt d'urgence.
 - Notifications natives, avec un texte court qui nomme l'environnement : « Production · app-prod : approbation demandée ».
+- Premier lancement : le choix du mode, deux tuiles (16 px, fond `--wash`) dans la carte de connexion, « Sur cette machine » et « Avec un serveur Jules ». « Changer de mode » reste accessible depuis la connexion et les réglages, sans réinstaller.
+- Mode local : sans Docker ni Podman, la carte de connexion explique quoi installer, avec les liens. La demande de merge locale est une carte d'attention (`.ac`) sur la page de la tâche, avec le bouton crème « Merger dans la branche de base » ; un refus (dossier modifié, conflit) s'affiche en puce `crit` avec sa raison.
 
 ## 12. Vérification
 
